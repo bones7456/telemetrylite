@@ -34,8 +34,13 @@ fn env(k: &str) -> Option<String> {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!("telemetrylite {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     tracing_subscriber::fmt().init();
 
+    tracing::info!("TelemetryLite v{}", env!("CARGO_PKG_VERSION"));
     let listen = env("TL_LISTEN").unwrap_or_else(|| "127.0.0.1:8888".into());
     let db_path = env("TL_DB_PATH").unwrap_or_else(|| "./telemetrylite.db".into());
     let auto_update = env("TL_GEOIP_AUTO_UPDATE").is_some_and(|v| v == "true" || v == "1");
@@ -61,8 +66,10 @@ async fn main() {
 
     let state = Arc::new(AppState { tx, keys: RwLock::new(keys), db: Mutex::new(conn), geo, trusted, salt, sessions: Mutex::new(HashMap::new()) });
 
+    // the page footer shows the running version
+    let index = Arc::new(include_str!("../web/index.html").replace("__VERSION__", env!("CARGO_PKG_VERSION")));
     let app = Router::new()
-        .route("/", axum::routing::get(|| async { Html(include_str!("../web/index.html")) }))
+        .route("/", axum::routing::get(move || { let page = index.clone(); async move { Html(page.to_string()) } }))
         // TelemetryDeck SDK:把 baseURL 设为 https://host/k/<key>/
         .route("/k/{key}/v2/", post(ingest::td_key))
         .route("/k/{key}/v2/namespace/{ns}/", post(ingest::td_key_ns))

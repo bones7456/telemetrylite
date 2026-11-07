@@ -9,58 +9,102 @@ on:
 permissions:
   contents: read
 
+# A newer push cancels the superseded run (never a release run).
+# 新的提交会取消被取代的运行(发布运行除外)。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
 
-  # Black-box regression test of the real binary + checks of the shell scripts.
-  # 对真实二进制做黑盒回归测试,并检查 shell 脚本。
+  # Black-box regression test of the real binary + checks of the shell scripts. Runs in parallel with `test`
+  # and uses the `ci` profile (no LTO) because it only checks behaviour.
+  # 对真实二进制做黑盒回归测试,并检查 shell 脚本。与 test 并行;只验证行为,所以用不开 LTO 的 ci 配置。
   regress:
-    needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Shell scripts
         run: |
           shellcheck -s sh scripts/install.sh
           shellcheck scripts/deploy.sh scripts/release.sh
           TL_REPO=owner/repo sh scripts/install.sh --dry-run --lang en
           TL_REPO=owner/repo sh scripts/install.sh --dry-run --lang zh --domain example.com
-      - run: cargo build --release --locked
+      - run: cargo build --profile ci --locked
       - name: Regression test
-        run: python3 scripts/regress.py --spawn target/release/telemetrylite
+        run: python3 scripts/regress.py --spawn target/ci/telemetrylite
 
-  # 推送 v* 标签时:交叉编译 Linux 静态二进制并发布 Release(附 SHA256SUMS 与 install.sh)
-  # On a v* tag: cross-compile static Linux binaries, run the regression test on the x86_64 artifact, publish.
-  release:
+  # Static musl binaries, one job per architecture in parallel. Runs on every push to main as well, so the release
+  # path is always tested and the build cache stays warm; only `publish` is tag-only.
+  # 静态 musl 二进制,两个架构并行编译。main 上每次推送也会跑,这样发布路径始终被验证、构建缓存保持热;只有 publish 仅限标签。
+  build:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag must match the version in Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME does not match the Cargo.toml version $v"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl-${{ matrix.arch }}
+      - run: pip3 install cargo-zigbuild   # also brings zig
+      - name: Build
+        run: |
+          cargo zigbuild --release --locked --target ${{ matrix.arch }}-unknown-linux-musl
+          mkdir dist
+          cp target/${{ matrix.arch }}-unknown-linux-musl/release/telemetrylite dist/telemetrylite-${{ matrix.arch }}-linux
+      - name: Regression test on the artifact that will be published
+        if: matrix.arch == 'x86_64'
+        run: |
+          args=()
+          case "$GITHUB_REF" in refs/tags/v*) args=(--expect-version "${GITHUB_REF_NAME#v}");; esac
+          python3 scripts/regress.py --spawn dist/telemetrylite-x86_64-linux "${args[@]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-${{ matrix.arch }}
+          path: dist/telemetrylite-${{ matrix.arch }}-linux
+          if-no-files-found: error
+
+  # Only on a v* tag, and only when the tests, the regression test and both builds passed.
+  # 仅在 v* 标签上,并且测试、回归测试和两个架构的编译都通过后才发布。
+  publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, regress]
+    needs: [test, regress, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
-          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
-      - run: pip3 install cargo-zigbuild   # 同时带上 zig
-      - name: Build
+          pattern: bin-*
+          merge-multiple: true
+          path: dist
+      - name: Release files
         run: |
-          mkdir dist
-          for arch in x86_64 aarch64; do
-            cargo zigbuild --release --locked --target "$arch-unknown-linux-musl"
-            cp "target/$arch-unknown-linux-musl/release/telemetrylite" "dist/telemetrylite-$arch-linux"
-          done
-          # 把仓库名写进安装脚本,用户无需再指定
+          # the repository name is filled into the installer, so users need not configure it
           sed "s|__REPO__|$GITHUB_REPOSITORY|" scripts/install.sh > dist/install.sh
           (cd dist && sha256sum telemetrylite-* > SHA256SUMS)
-      - name: Regression test on the artifact that will be published
-        run: python3 scripts/regress.py --spawn dist/telemetrylite-x86_64-linux
+          ls -l dist
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

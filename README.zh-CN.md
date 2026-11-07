@@ -66,11 +66,17 @@ sh install.sh --domain telemetry.example.com --email me@example.com   # --email 
 
 ### 发布(维护者)
 
-推送 `v*` 标签即触发 GitHub Actions:测试通过后为 x86_64 / aarch64 各编一个静态二进制,连同 `SHA256SUMS` 与 `install.sh`(已写入仓库名)发布到 Release:
+版本号以 `Cargo.toml` 里的 `version` 为唯一来源(两次发布之间带 `-dev` 后缀)。发布步骤:
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+# 1. 把 Cargo.toml 的 version 改成 "0.1.7",并刷新锁文件
+cargo build && git commit -am "Release 0.1.7"
+# 2. 打标签并推送:标签必须等于 Cargo.toml 的版本,否则 CI 拒绝发布
+git tag v0.1.7 && git push origin main v0.1.7
+# 3. 发布后开启下一个周期:version = "0.1.8-dev"
 ```
+
+推送 `v*` 标签触发 GitHub Actions:测试、回归测试与两个架构(x86_64、aarch64 静态二进制)的编译并行进行;回归测试还会对 x86_64 产物再跑一遍;全部通过后才把二进制连同 `SHA256SUMS` 与 `install.sh`(已写入仓库名)发布到 Release。运行中的版本可以用 `telemetrylite --version`、启动日志和页面页脚查看。
 
 从源码部署到自己的服务器:`./scripts/deploy.sh you@server [域名]`(本机交叉编译并上传,需要 zig、cargo-zigbuild)。
 

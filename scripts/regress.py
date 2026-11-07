@@ -10,11 +10,11 @@ Options: --host HEADER   send this Host header (testing through nginx)
          --nginx         with --base: run the checks that only make sense behind the nginx the installer sets up
 Exit status 0 = all checks passed.
 """
-import argparse, gzip, http.client, json, os, socket, sqlite3, subprocess, sys, tempfile, time, urllib.parse, urllib.request
+import argparse, re, gzip, http.client, json, os, socket, sqlite3, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--spawn"); ap.add_argument("--base"); ap.add_argument("--password", default="regress-pw")
-ap.add_argument("--host"); ap.add_argument("--geoip-db"); ap.add_argument("--geo", action="store_true"); ap.add_argument("--nginx", action="store_true")
+ap.add_argument("--host"); ap.add_argument("--expect-version", help="the version the binary and the page must report (e.g. 0.1.7)"); ap.add_argument("--geoip-db"); ap.add_argument("--geo", action="store_true"); ap.add_argument("--nginx", action="store_true")
 args = ap.parse_args()
 if bool(args.spawn) == bool(args.base):
     ap.error("give exactly one of --spawn BINARY or --base URL")
@@ -63,6 +63,13 @@ def check(name, cond, detail=""):
 def run():
     print("== UI and login")
     s, _, b, _ = req("GET", "/"); check("GET / is 200 and serves the UI", s == 200 and b"TelemetryLite" in b)
+    m = re.search(rb"TelemetryLite v(\d+\.\d+\.\d+[\w.-]*)", b)
+    check("the page footer shows the running version (placeholder replaced)", m is not None and b"__VERSION__" not in b)
+    if args.spawn:
+        out = subprocess.run([os.path.abspath(args.spawn), "--version"], capture_output=True, text=True).stdout.strip()
+        check("--version prints the version", out == f"telemetrylite {m.group(1).decode()}" if m else False, out)
+    if args.expect_version:
+        check(f"the reported version is {args.expect_version}", m is not None and m.group(1).decode() == args.expect_version, m.group(1).decode() if m else "none")
     check("UI contains the AI prompt, refresh and analytics pages", b"agentPrompt" in b and b"autoRefresh" in b and b"retentionTitle" in b)
     check("API without a session is 401", req("GET", "/api/apps")[0] == 401)
     check("wrong password is 401", req("POST", "/api/login", {"password": "nope"})[0] == 401)

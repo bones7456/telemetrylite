@@ -169,7 +169,7 @@ scripts/         install.sh(服务器安装)、deploy.sh(从源码部署)、rele
 - 前面放 nginx:终结 HTTPS、限制请求体大小、给 `/api/login` 限速,并用 `X-Forwarded-For` 传真实客户端 IP(覆盖而非追加)。服务只监听 `127.0.0.1`。
 - **`scripts/install.sh`**(从 GitHub Release 获取,`curl | sh` 运行):探测系统、CPU(x86_64 / aarch64)、权限、下载工具、systemd、端口占用和反向代理,打印部署计划,用 `SHA256SUMS` 校验二进制,然后安装、升级或卸载。带 `--domain` 时写入 nginx 配置并申请 Let's Encrypt 证书。输出为双语(默认英文,系统语言为中文或 `--lang zh` 时为中文)。`--dry-run` 不做任何修改。
 - **更新**:`install.sh` 是幂等的。只要存在二进制或 service 文件就按更新处理:把已安装二进制的 SHA-256 与发布版 `SHA256SUMS` 里的比较(相同就什么都不做,`--force` 可覆盖),把旧二进制备份为 `telemetrylite.prev`,重启,等待服务响应,**不响应就回滚**到 `.prev`。已有设置(端口、GeoIP、语言)从 service 文件里读回;与安装脚本当前会生成的内容不同的 service 文件会被保留并提示(`--rewrite-unit` 可重新生成)。没有 systemd 时只替换二进制。
-- **CI**:每次推送先跑单元测试,再跑 `regress` 任务(shellcheck、`install.sh --dry-run`、release 构建、`scripts/regress.py --spawn`——它启动真实的二进制,检查写入、统计、隐私(包括原始 IP 不会落库)、key 与管理 API)。推送 `v*` 标签时还会用 `cargo-zigbuild` 交叉编译 x86_64 与 aarch64 的 musl 二进制,**对即将发布的 x86_64 产物再跑一遍回归测试**,通过后才连同 `SHA256SUMS` 和 `install.sh`(已写入仓库名)一起发布。
+- **CI**(`.github/workflows/ci.yml`):`test`(单元测试)与 `regress`(shellcheck、`install.sh --dry-run`、不开 LTO 的 `ci` 配置构建,以及 `scripts/regress.py --spawn`——它启动真实二进制,检查写入、统计、隐私(包括原始 IP 不会落库)、key、平台筛选与管理 API)并行运行。`main` 上每次推送和每个标签还会运行 `build`:用 `cargo-zigbuild` 并行交叉编译 x86_64 与 aarch64 的 musl 二进制(这样发布路径始终被验证,构建缓存也保持热),并**对 x86_64 产物再跑一遍回归测试**。只有 `v*` 标签才会运行 `publish`,且要求 `test`、`regress` 和两个架构的编译全部通过:创建 Release,附上二进制、`SHA256SUMS` 与 `install.sh`(已写入仓库名)。标签必须等于 `Cargo.toml` 里的版本(版本号的唯一来源),否则构建失败。缓存(`rust-cache`)和取消被取代的运行让它保持较快。
 - **从源码部署**:`scripts/deploy.sh user@host [域名]` 在本机交叉编译,并在远端运行 `install.sh`。
 
 ## 10. 暂未实现 / 有意跳过

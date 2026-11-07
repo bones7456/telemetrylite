@@ -65,11 +65,17 @@ Next steps (issuing keys, connecting apps, backups, troubleshooting): **[docs/DE
 
 ### Releasing (maintainers)
 
-Pushing a `v*` tag triggers GitHub Actions: after the tests pass it builds a static binary for x86_64 and aarch64 and publishes them to a Release together with `SHA256SUMS` and `install.sh` (with the repository name filled in):
+`version` in `Cargo.toml` is the single source of truth for the version (between releases it carries a `-dev` suffix). To release:
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+# 1. set version = "0.1.7" in Cargo.toml, then refresh the lock file
+cargo build && git commit -am "Release 0.1.7"
+# 2. tag and push: the tag must equal the Cargo.toml version, otherwise CI refuses to publish
+git tag v0.1.7 && git push origin main v0.1.7
+# 3. afterwards start the next cycle: version = "0.1.8-dev"
 ```
+
+A `v*` tag triggers GitHub Actions: tests and the regression test run in parallel with the two builds (x86_64 and aarch64 static binaries); the regression test is also run on the x86_64 artifact; only when everything is green are the binaries published to a Release together with `SHA256SUMS` and `install.sh` (repository name filled in). The running version is shown by `telemetrylite --version`, in the startup log and in the page footer.
 
 To deploy from source to your own server: `./scripts/deploy.sh you@server [domain]` (cross-compiles locally and uploads; needs zig and cargo-zigbuild).
 
