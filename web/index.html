@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TelemetryLite</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--fg:#1c2330;--mute:#6b7585;--line:#e3e7ee;--accent:#2f6fed;--bar:#cfe0ff;--danger:#d23b3b}
+@media(prefers-color-scheme:dark){:root{--bg:#12161d;--card:#1a2029;--fg:#e6e9ef;--mute:#8f9aac;--line:#2a3340;--accent:#6b9bff;--bar:#27406e;--danger:#ff7676}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:var(--accent);text-decoration:none;cursor:pointer}
+header{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--line)}
+header b{font-size:16px}header .sp{flex:1}
+main{max-width:1100px;margin:0 auto;padding:24px 16px}
+footer{text-align:center;color:var(--mute);font-size:12px;padding:24px}
+h2{margin:0 0 16px;font-size:20px}h3{margin:0 0 12px;font-size:14px;color:var(--mute);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.grid .card{margin:0}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
+.tile b{display:block;font-size:28px}.tile span{color:var(--mute)}
+.tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.tabs a{padding:8px 14px;color:var(--mute);border-bottom:2px solid transparent}
+.tabs a.on{color:var(--fg);border-color:var(--accent)}
+.bar{position:relative;padding:3px 8px;margin:2px 0;border-radius:4px;display:flex;justify-content:space-between;gap:8px;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--bar);z-index:0}
+.bar span{position:relative;z-index:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar span+span{color:var(--mute);flex:none}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+input,select,button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+button{cursor:pointer}button.p{background:var(--accent);border-color:var(--accent);color:#fff}button.d{color:var(--danger)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mute);font-weight:600}td.m{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:12px;margin:8px 0}
+.mute{color:var(--mute)}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+svg{width:100%;height:auto;display:block}
+@media(max-width:700px){.tiles,.two{grid-template-columns:1fr}header{padding:12px 16px}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<footer>TelemetryLite · IP geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP.com</a></footer>
+<script>
+const $app = document.getElementById('app');
+const h = (tag, props, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'class') e.className = v;
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : String(c));
+  return e;
+};
+const api = async (method, path, body) => {
+  const r = await fetch('/api' + path, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
+  if (r.status === 401 && path !== '/login') { location.hash = '#/login'; throw new Error('unauth'); }
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+};
+const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : String(n);
+const when = ts => new Date(ts).toLocaleString();
+
+// ---- 图表 ----
+function chart(series, key, bars) {
+  const W = 600, H = 150, P = 4, max = Math.max(1, ...series.map(s => s[key]));
+  const x = i => P + (series.length < 2 ? W / 2 : i * (W - 2 * P) / (series.length - 1));
+  const y = v => H - 18 - (v / max) * (H - 30);
+  let body;
+  if (bars) {
+    const w = Math.max(2, (W - 2 * P) / series.length - 2);
+    body = series.map((s, i) => `<rect x="${P + i * (W - 2 * P) / series.length}" y="${y(s[key])}" width="${w}" height="${H - 18 - y(s[key])}" fill="var(--accent)" opacity=".8"/>`).join('');
+  } else {
+    const pts = series.map((s, i) => `${x(i)},${y(s[key])}`).join(' ');
+    body = `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>` +
+      series.map((s, i) => `<circle cx="${x(i)}" cy="${y(s[key])}" r="2.5" fill="var(--accent)"/>`).join('');
+  }
+  const lab = (t, a, xx) => `<text x="${xx}" y="${H - 3}" text-anchor="${a}" font-size="11" fill="var(--mute)">${t}</text>`;
+  const svg = `<svg viewBox="0 0 ${W} ${H}"><text x="${P}" y="11" font-size="11" fill="var(--mute)">${max}</text>
+    <line x1="0" x2="${W}" y1="${H - 18}" y2="${H - 18}" stroke="var(--line)"/>${body}
+    ${series.length ? lab(series[0].t, 'start', P) + lab(series.at(-1).t, 'end', W - P) : ''}</svg>`;
+  const d = h('div'); d.innerHTML = svg; return d;
+}
+const bars = (rows, key) => {
+  const max = Math.max(1, ...rows.map(r => r[key]));
+  return rows.length ? rows.map(r => h('div', { class: 'bar' },
+    h('i', { style: `width:${r[key] / max * 100}%` }), h('span', {}, r.v ?? r.type), h('span', {}, fmt(r[key])))) : h('div', { class: 'mute' }, '暂无数据');
+};
+
+// ---- 页面 ----
+const shell = (crumbs, ...kids) => h('div', {},
+  h('header', {}, h('b', {}, h('a', { href: '#/' }, 'TelemetryLite')), crumbs, h('span', { class: 'sp' }),
+    h('a', { onclick: async () => { await api('POST', '/logout'); location.hash = '#/login'; } }, '退出')),
+  h('main', {}, ...kids));
+
+function loginView() {
+  const pw = h('input', { type: 'password', placeholder: '管理员密码', autofocus: true });
+  const msg = h('div', { class: 'mute' });
+  const go = async () => {
+    try { await api('POST', '/login', { password: pw.value }); location.hash = '#/'; }
+    catch { msg.textContent = '密码错误'; }
+  };
+  pw.addEventListener('keydown', e => e.key === 'Enter' && go());
+  return h('main', { style: 'max-width:340px;margin-top:15vh' }, h('div', { class: 'card' },
+    h('h2', {}, 'TelemetryLite'), h('div', { class: 'row' }, pw, h('button', { class: 'p', onclick: go }, '登录')), msg));
+}
+
+async function appsView() {
+  const apps = await api('GET', '/apps');
+  const name = h('input', { placeholder: '新 App 名称' });
+  const add = async () => {
+    if (!name.value.trim()) return;
+    const { id } = await api('POST', '/apps', { name: name.value });
+    location.hash = `#/app/${id}/settings`;
+  };
+  return shell(null,
+    h('h2', {}, 'App'),
+    h('div', { class: 'row' }, name, h('button', { class: 'p', onclick: add }, '创建')),
+    h('div', { class: 'grid' }, apps.map(a => h('div', { class: 'card' },
+      h('h3', {}, h('a', { href: `#/app/${a.id}/overview` }, a.name)),
+      h('b', { style: 'font-size:24px' }, fmt(a.events_24h)), h('span', { class: 'mute' }, ' 事件 / 24h')))),
+    apps.length ? null : h('div', { class: 'mute' }, '还没有 App,先创建一个。'));
+}
+
+const appShell = (app, tab, ...kids) => shell(h('span', { class: 'mute' }, '/ ', app.name),
+  h('div', { class: 'tabs' }, [['overview', '概览'], ['events', '事件'], ['settings', '设置']].map(([t, l]) =>
+    h('a', { href: `#/app/${app.id}/${t}`, class: t === tab ? 'on' : '' }, l))), ...kids);
+
+async function overviewView(app) {
+  const q = JSON.parse(sessionStorage.getItem('q') || '{"days":7,"test":0}');
+  const s = await api('GET', `/apps/${app.id}/stats?days=${q.days}&test=${q.test}`);
+  const save = (k, v) => { q[k] = v; sessionStorage.setItem('q', JSON.stringify(q)); route(); };
+  const sel = (k, opts) => h('select', { onchange: e => save(k, +e.target.value) },
+    opts.map(([v, l]) => h('option', { value: v, selected: v === q[k] }, l)));
+  const t = s.totals || { events: 0, users: 0, sessions: 0 };
+  const dimTitle = { app_version: 'App 版本', os_version: '系统版本', device_model: '设备型号', locale: '语言/地区', country: '国家', city: '城市' };
+  return appShell(app, 'overview',
+    h('div', { class: 'row' }, sel('days', [[1, '24 小时'], [7, '7 天'], [30, '30 天'], [90, '90 天']]), sel('test', [[0, '正式数据'], [1, '测试数据']])),
+    h('div', { class: 'tiles' }, [['活跃用户', t.users], ['事件', t.events], ['会话', t.sessions]].map(([l, v]) =>
+      h('div', { class: 'card tile' }, h('b', {}, fmt(v)), h('span', {}, l)))),
+    h('div', { class: 'two' },
+      h('div', { class: 'card' }, h('h3', {}, '活跃用户'), chart(s.series, 'users')),
+      h('div', { class: 'card' }, h('h3', {}, '事件数'), chart(s.series, 'events', true))),
+    h('div', { class: 'card' }, h('h3', {}, '热门事件'), bars(s.top, 'events')),
+    h('div', { class: 'two' }, Object.entries(dimTitle).map(([k, l]) =>
+      h('div', { class: 'card' }, h('h3', {}, l, ' · 用户数'), bars(s.dims[k], 'users')))));
+}
+
+async function eventsView(app) {
+  let kind = '', rows = [];
+  const tbody = h('tbody'), more = h('button', {}, '加载更多'), type = h('input', { placeholder: '按事件名过滤(精确匹配)' });
+  const load = async reset => {
+    if (reset) { rows = []; tbody.replaceChildren(); }
+    const before = rows.length ? `&before=${rows.at(-1).id}` : '';
+    const page = await api('GET', `/apps/${app.id}/events?limit=100&type=${encodeURIComponent(kind)}${before}`);
+    rows.push(...page);
+    for (const r of page) tbody.append(h('tr', {},
+      h('td', {}, when(r.ts), r.is_test ? ' 🧪' : ''), h('td', {}, r.type),
+      h('td', { class: 'mute' }, [r.app_version, r.os && `${r.os} ${r.os_version || ''}`, r.device_model, r.country && [r.country, r.city].filter(Boolean).join('/')].filter(Boolean).join(' · ')),
+      h('td', { class: 'm' }, r.payload === '{}' ? '' : r.payload)));
+    more.style.display = page.length < 100 ? 'none' : '';
+  };
+  type.addEventListener('keydown', e => { if (e.key === 'Enter') { kind = type.value.trim(); load(true); } });
+  more.addEventListener('click', () => load(false));
+  await load(true);
+  return appShell(app, 'events', h('div', { class: 'row' }, type, h('span', { class: 'mute' }, '回车确认;含测试数据')),
+    h('div', { class: 'card', style: 'overflow:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['时间', '事件', '环境', '参数'].map(x => h('th', {}, x)))), tbody)), more);
+}
+
+async function settingsView(app) {
+  const keys = await api('GET', `/apps/${app.id}/keys`);
+  const name = h('input', { value: app.name }), days = h('input', { type: 'number', value: app.retention_days, style: 'width:90px' });
+  const label = h('input', { placeholder: '备注,如 ios-prod' }), fresh = h('div');
+  const origin = location.origin;
+  const mk = async () => {
+    const { key } = await api('POST', `/apps/${app.id}/keys`, { label: label.value });
+    fresh.replaceChildren(h('div', { class: 'card' }, h('b', {}, '新 key(仅显示这一次,请立即保存)'), h('pre', {}, key),
+      h('h3', {}, 'TelemetryDeck SDK(Swift)'),
+      h('pre', {}, `let config = TelemetryDeck.Config(appID: "${app.id}", baseURL: URL(string: "${origin}/k/${key}/")!)\nTelemetryDeck.initialize(config: config)`),
+      h('h3', {}, 'OpenTelemetry(OTLP/HTTP Logs)'),
+      h('pre', {}, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${origin}/v1/logs\nOTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${key}`)));
+    label.value = '';
+  };
+  return appShell(app, 'settings',
+    h('div', { class: 'card' }, h('h3', {}, '基本信息'), h('div', { class: 'row' }, name, '数据保留', days, '天',
+      h('button', { class: 'p', onclick: async () => { await api('PATCH', `/apps/${app.id}`, { name: name.value, retention_days: +days.value }); route(); } }, '保存')),
+      h('div', { class: 'mute' }, 'App ID: ', app.id)),
+    h('div', { class: 'card' }, h('h3', {}, '写入 API key(只能写入,不能读取)'),
+      h('div', { class: 'row' }, label, h('button', { class: 'p', onclick: mk }, '签发新 key')), fresh,
+      h('table', {}, h('thead', {}, h('tr', {}, ['备注', '前缀', '创建时间', ''].map(x => h('th', {}, x)))),
+        h('tbody', {}, keys.map(k => h('tr', {}, h('td', {}, k.label), h('td', { class: 'm' }, k.prefix + '…'), h('td', {}, when(k.created_at)),
+          h('td', {}, k.revoked_at ? h('span', { class: 'mute' }, '已吊销') : h('a', { onclick: async () => { if (confirm('吊销后使用该 key 的客户端将无法上报,确定?')) { await api('DELETE', `/keys/${k.id}`); route(); } } }, '吊销'))))))),
+    h('div', { class: 'card' }, h('h3', {}, '危险操作'),
+      h('button', { class: 'd', onclick: async () => { if (confirm(`删除 App「${app.name}」及其全部数据?不可恢复。`)) { await api('DELETE', `/apps/${app.id}`); location.hash = '#/'; } } }, '删除 App 及全部数据')));
+}
+
+async function route() {
+  const parts = location.hash.slice(2).split('/');
+  try {
+    let view;
+    if (parts[0] === 'login') view = loginView();
+    else if (parts[0] === 'app' && parts[1]) {
+      const app = await api('GET', `/apps/${parts[1]}`);
+      view = await ({ events: eventsView, settings: settingsView }[parts[2]] || overviewView)(app);
+    } else view = await appsView();
+    $app.replaceChildren(view);
+  } catch (e) { if (e.message !== 'unauth') $app.replaceChildren(h('main', {}, h('div', { class: 'card' }, '出错了:' + e.message))); }
+}
+addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
