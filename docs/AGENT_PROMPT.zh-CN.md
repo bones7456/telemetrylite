@@ -13,6 +13,7 @@
 - 服务器地址: <SERVER_URL>   例如 https://telemetry.example.com
 - 写入 key:   <WRITE_KEY>
 - App ID:     <APP_ID>
+这个应用的所有平台(iOS、Android 等)都使用同样的这三个值:不要另建应用。管理界面会自己区分平台。
 
 步骤:
 1. 识别平台和构建系统。修改文件之前,先说明你要用下面哪种方式。

@@ -9,6 +9,7 @@
 - 写入:`/k/<key>/v2/`(TelemetryDeck)、`/v1/logs`(OTLP,protobuf/JSON,支持 gzip)
 - 不存 IP;可选 GeoIP(DB-IP City Lite)解析国家/地区/城市
 - 管理界面:概览(活跃用户与事件、按周留存队列、App 版本随时间变化、热门事件、版本/系统/机型/语言/国家/城市分布)、新用户与回访用户、事件类型、错误、事件浏览器、API key 管理;测试事件被隐藏时有提示;支持手动刷新(默认)和可选的自动刷新,刷新只重新请求数据
+- **一个应用,多个平台**:iOS 和 Android(以及 macOS、watchOS 等)可以共用一个应用和 key;平台筛选(取自 SDK 上报的操作系统参数)让每个页面都能只看某一个平台
 - **AI 辅助接入**:按 App 生成、信息全部填好的提示词,复制给编程 agent 即可(中英文)
 - 设计说明见 [DESIGN.zh-CN.md](DESIGN.zh-CN.md)
 
@@ -55,11 +56,11 @@ sh install.sh --domain telemetry.example.com --email me@example.com   # --email 
 | 权限 | root 直接执行;否则用 `sudo`;两者都没有则退出 |
 | 下载工具 | `curl` 或 `wget`;下载后用 Release 里的 `SHA256SUMS` 校验,不通过即中止 |
 | systemd | 有:创建专用用户与服务并开机自启;没有:只装二进制,并给出手动启动命令 |
-| 已安装? | 是则走升级:只换二进制并重启,保留你的 service 文件与配置 |
+| 已安装? | 是则走**更新**:先把已安装的二进制与发布版比较,已是最新就什么都不做;否则替换二进制(旧的备份为 `telemetrylite.prev`)并重启服务,新版本起不来时**自动回滚**。保留你的 service 文件与配置;没有 systemd 的机器会提示你自己重启进程 |
 | 端口占用 | 默认 8888 被占用时退出并提示 `--port` |
 | 反向代理 | 指定 `--domain` 时:有 nginx → 自动配置(含登录限速)并用 certbot 申请 HTTPS;有 Caddy → 只打印配置片段,不改你的 Caddyfile;都没有 → 提示安装命令,不擅自装包 |
 
-选项:`--domain` `--email`(certbot 邮箱)`--version v0.1.0` `--port N` `--no-geoip` `--dry-run` `--yes` `--uninstall`(保留数据目录)。升级即重新运行同一条命令;安装完成后会打印管理界面地址和**仅显示一次**的管理员密码。
+选项:`--domain` `--email`(certbot 邮箱)`--version v0.1.0` `--port N` `--no-geoip` `--force`(已是最新也重新安装)`--rewrite-unit`(重新生成 systemd service 文件)`--lang en|zh` `--dry-run` `--yes` `--uninstall`(保留数据目录)。**以后更新,重新运行同一条命令即可**;安装完成后会打印管理界面地址和**仅显示一次**的管理员密码。
 
 后续步骤(签发 key、接入 App、备份、排错)见 **[docs/DEPLOY.zh-CN.md](docs/DEPLOY.zh-CN.md)**。
 
@@ -126,7 +127,12 @@ LogRecord 映射:`event_name`(或属性 `event.name`,或 body)→ 事件名;`use
 ```sh
 cargo test
 TL_LISTEN=127.0.0.1:8899 TL_ADMIN_PASSWORD=pw cargo run
+
+# 黑盒回归测试:在空闲端口上用临时数据库启动二进制并测试
+cargo build --release && python3 scripts/regress.py --spawn target/release/telemetrylite
 ```
+
+CI 在发布任何东西之前都会跑同一套回归测试(见 [DESIGN.zh-CN.md](DESIGN.zh-CN.md))。
 
 ## 许可证
 

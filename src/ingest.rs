@@ -101,7 +101,7 @@ impl Ctx<'_> {
             session_id: session,
             app_version: pick(dims.app_version),
             build: pick(dims.build),
-            os: pick(dims.os),
+            os: pick(dims.os).map(|o| normalize_os(&o)),
             os_version: pick(dims.os_version),
             device_model: pick(dims.device_model),
             locale: pick(dims.locale),
@@ -113,6 +113,17 @@ impl Ctx<'_> {
             ..Default::default()
         }
     }
+}
+
+/// The platform filter groups by the exact `os` text, so SDKs that differ only in letter case ("android" / "Android") must not split into two platforms.
+fn normalize_os(os: &str) -> String {
+    let os = os.trim();
+    for known in ["iOS", "iPadOS", "macOS", "watchOS", "tvOS", "visionOS", "Android", "Windows", "Linux", "HarmonyOS"] {
+        if os.eq_ignore_ascii_case(known) {
+            return known.to_string();
+        }
+    }
+    os.to_string()
 }
 
 /// 各维度列的候选属性名(靠前的优先),`hidden` 里的键不再重复写入 payload。
@@ -463,5 +474,13 @@ mod tests {
         let mut got = keys.clone();
         got.sort();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn os_names_are_normalized() {
+        assert_eq!(normalize_os("android"), "Android");
+        assert_eq!(normalize_os(" IOS "), "iOS");
+        assert_eq!(normalize_os("macos"), "macOS");
+        assert_eq!(normalize_os("Tizen"), "Tizen");
     }
 }

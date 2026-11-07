@@ -14,6 +14,8 @@ Values (never invent them; if one is still a <placeholder>, ask me):
 - Server URL: <SERVER_URL>   e.g. https://telemetry.example.com
 - Write key:  <WRITE_KEY>
 - App ID:     <APP_ID>
+Use these same values on every platform of this app (iOS, Android, ...): do not create a second
+app. The admin UI tells the platforms apart by itself.
 
 Steps:
 1. Detect the platform and build system. Say which route below you use before editing files.

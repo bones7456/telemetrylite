@@ -74,6 +74,7 @@ CREATE INDEX signal_app_type ON signal(app_id, type, ts);
 - Common dimensions are real columns because charts group by them constantly; everything else stays in `payload` and can be queried with SQLite JSON functions.
 - Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON`.
 - Retention: every hour, expired rows are deleted in batches of 10,000 per app retention setting.
+- **Schema versioning**: the schema version lives in `PRAGMA user_version` (1 = every release so far; databases from before versioning have 0 and are accepted). To change the schema, bump `SCHEMA_VERSION` in `db.rs` and append a step to `MIGRATIONS`; pending steps run on start, each in a transaction. A database with a *newer* version than the binary knows is refused with a clear error, so an older binary (for example after a rollback) never touches a schema it does not understand.
 - Dashboard queries scan the indexed raw table directly (no pre-aggregation yet — see §10).
 
 ## 4. Ingest
@@ -123,7 +124,7 @@ Verified against the Swift SDK source: the SDK posts to `{baseURL}/v2/` (or `/v2
 
 ## 5. Keys and authentication
 
-**Write keys (for SDKs)**: `tl_<32 random bytes, base64url>`; shown once at creation, only the SHA-256 is stored. Several per app, revocable at any time, write-only for that app. Authentication is a lookup in the in-memory map.
+**Write keys (for SDKs)**: `tl_<32 random bytes, base64url>`; shown once at creation, only the SHA-256 is stored. Several per app (each needs a name; the UI suggests the current time), revocable at any time, write-only for that app. Authentication is a lookup in the in-memory map.
 
 **Admin**: one admin. The password is generated on first start and logged once, or set with `TL_ADMIN_PASSWORD` (applied on every start, which is also the way to reset it); stored as an argon2 hash. A login sets an opaque random token in an `HttpOnly; SameSite=Strict` cookie (`Secure` when `X-Forwarded-Proto` is https); sessions live in memory for 30 days and are lost on restart. Failed logins are delayed 0.5 s and rate-limited by nginx. TLS terminates at nginx (§9).
 
@@ -132,8 +133,9 @@ Verified against the Swift SDK source: the SDK posts to `{baseURL}/v2/` (or `/v2
 One HTML file, plain JavaScript, inline SVG charts, light/dark by system setting.
 
 - **Login**, **apps** list and creation.
+- **Platform filter**: when an app has data from more than one platform (the `os` column: `iOS`, `Android`, … — Swift SDK sends `iOS`/`macOS`/…, Kotlin SDK sends `Android`, OTLP uses `os.name`; letter case is normalized on ingest), a *Platform* dropdown appears in the toolbar of every data page and of the Events page. Every statistics endpoint takes an optional `platform` parameter (bound as a SQL parameter, never spliced into the query); `/api/apps/{id}/platforms` lists the platforms of the last 90 days. The choice is remembered for the browser session. The header numbers always cover the whole app. One app with a filter is the recommended setup for iOS + Android; use separate apps only if you want fully separate keys, retention periods and dashboards.
 - **Header**: an app switcher, and three headline numbers over the last 90 days of live data: users, most used SDK, errors.
-- **Overview**: range (24 h / 7 d / 30 d / 90 d), live vs test data (a banner says how many events of the other kind are hidden, with a one-click switch), tiles (users in the last hour, active users, events, sessions), active-users line chart and events bar chart, **weekly retention cohorts** (last 8 weeks, weeks start on Monday), **app versions over time** (share of users, top 8 versions), top events with their user counts, and breakdowns by app version, OS version, device model, locale, country (shown by name in the UI language, via the browser's `Intl.DisplayNames`) and city. Charts have grid lines and hover tooltips; missing time buckets are filled with zero and bucketed in the browser's time zone.
+- **Overview**: range (24 h / 7 d / 30 d / 90 d), live vs test data (a banner says how many events of the other kind are hidden, with a one-click switch), tiles (users in the last hour, active users, events, sessions), active-users line chart and events bar chart, **weekly retention cohorts** (last 8 weeks, weeks start on Monday), **app versions over time** (share of users, top 8 versions), top events with their user counts, and breakdowns by app version, OS version, device model, locale, country (shown by name in the UI language, via the browser's `Intl.DisplayNames`) and city. Charts have grid lines and a hover card like TelemetryDeck's (bold date, then one row per series with a colour dot, name and bold value; stacked charts show each series' share to two decimals and **focus the series under the pointer**: it keeps its colour in every column while the others fade, and the matching legend item and card row are emphasized; the hovered column is highlighted); the retention heatmap has its own hover card (retention to two decimals and the week, when the cohort first appeared, and the user count); missing time buckets are filled with zero and bucketed in the browser's time zone.
 - **Users**: new users per day and new vs returning users. A user is new on the day their first event appears in the stored data (so after a retention purge, long-gone users can show up as new again).
 - **Event types**: every event type with users, events and last-seen time; a name opens the Events page filtered to it.
 - **Errors**: trend and a table grouped by error id and category, from the SDK's preset `TelemetryDeck.Error.occurred` event.
@@ -152,7 +154,7 @@ src/admin.rs     /api/*: sessions, apps, keys, and the stats / users / retention
 src/geo.rs       mmdb loading (hot reload), download and update
 src/i18n.rs      log language (English / Chinese)
 web/index.html   the whole admin UI
-scripts/         install.sh (server installer), deploy.sh (from source), release.sh (local cross build)
+scripts/         install.sh (server installer), deploy.sh (from source), release.sh (local cross build), regress.py (black-box regression test)
 .github/workflows/ci.yml   tests on every push; release builds on v* tags
 ```
 
@@ -166,7 +168,8 @@ Main dependencies: `axum`, `tokio`, `rusqlite` (bundled), `prost`, `serde_json`,
 
 - Put nginx in front: it terminates HTTPS, limits the body size, rate-limits `/api/login`, and passes the real client IP in `X-Forwarded-For` (overwriting, never appending). The service listens on `127.0.0.1` only.
 - **`scripts/install.sh`** (served from the GitHub Release, run with `curl | sh`): detects OS, CPU (x86_64 / aarch64), privileges, downloader, systemd, port use and reverse proxy, prints a plan, verifies the binary against `SHA256SUMS`, then installs, upgrades or uninstalls. With `--domain` it writes an nginx config and requests a Let's Encrypt certificate. Output is bilingual (English default, Chinese by locale or `--lang zh`). `--dry-run` changes nothing.
-- **CI**: a `v*` tag runs the tests, cross-compiles x86_64 and aarch64 musl binaries with `cargo-zigbuild`, and publishes them with `SHA256SUMS` and `install.sh` (repository name filled in).
+- **Updates**: `install.sh` is idempotent. If a binary or service file exists it is an update: it compares the installed binary's SHA-256 with the release's `SHA256SUMS` (equal = nothing to do, `--force` overrides), keeps the old binary as `telemetrylite.prev`, restarts, waits for the service to answer, and **rolls back** to `.prev` if it does not. Existing settings (port, GeoIP, language) are read back from the service file; a service file that differs from what the installer would generate is kept and reported (`--rewrite-unit` regenerates it). Without systemd only the binary is replaced.
+- **CI**: every push runs the unit tests, then a `regress` job (shellcheck, `install.sh --dry-run`, release build, `scripts/regress.py --spawn`, which starts the real binary and checks ingest, statistics, privacy — including that no raw IP reaches the database — keys and the admin API). A `v*` tag additionally cross-compiles x86_64 and aarch64 musl binaries with `cargo-zigbuild`, **runs the regression test on the x86_64 artifact that is about to be published**, and only then publishes the binaries with `SHA256SUMS` and `install.sh` (repository name filled in).
 - **From source**: `scripts/deploy.sh user@host [domain]` cross-compiles locally and runs `install.sh` remotely.
 
 ## 10. Not implemented yet / deliberately skipped

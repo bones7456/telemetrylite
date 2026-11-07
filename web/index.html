@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TelemetryLite</title>
 <style>
-:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--fg:#1c2330;--mute:#6b7585;--line:#e3e7ee;--accent:#2f6fed;--bar:#cfe0ff;--danger:#d23b3b}
-@media(prefers-color-scheme:dark){:root{--bg:#12161d;--card:#1a2029;--fg:#e6e9ef;--mute:#8f9aac;--line:#2a3340;--accent:#6b9bff;--bar:#27406e;--danger:#ff7676}}
+:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--fg:#1c2330;--mute:#6b7585;--line:#e3e7ee;--accent:#2f6fed;--bar:#cfe0ff;--danger:#d23b3b;--warn:#b45309;--warnbg:rgba(245,158,11,.13);--hover:rgba(0,0,0,.10)}
+@media(prefers-color-scheme:dark){:root{--bg:#12161d;--card:#1a2029;--fg:#e6e9ef;--mute:#8f9aac;--line:#2a3340;--accent:#6b9bff;--bar:#27406e;--danger:#ff7676;--warn:#fbbf24;--warnbg:rgba(251,191,36,.12);--hover:rgba(255,255,255,.18)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 a{color:var(--accent);text-decoration:none;cursor:pointer}
@@ -44,6 +44,18 @@ summary{cursor:pointer}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:12px;color:var(--mute)}.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 table.heat{font-size:12px}.heat th,.heat td{padding:3px 6px;text-align:center;white-space:nowrap}.heat th:first-child,.heat td:first-child{text-align:left}.heat td.cell{border:2px solid var(--card)}
 th.num,td.num{text-align:right}
+.seg{transition:opacity .12s}.legend span{transition:opacity .12s}
+.hit{fill:transparent}.hit:hover{fill:var(--hover)}
+.tip{position:fixed;z-index:50;display:none;pointer-events:none;min-width:190px;max-width:340px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.3);font-size:13px}
+.tip .tt{font-weight:700;font-size:14px;padding:9px 14px;border-bottom:1px solid var(--line)}.tip .tb{padding:6px 0}
+.tip .tr{display:flex;align-items:center;gap:9px;padding:3px 14px}.tip .tr i{width:10px;height:10px;border-radius:50%;flex:none}
+.tip .tr.act{background:var(--hover)}.tip .tr.act .tl{color:var(--fg);font-weight:700}
+.tip .ln{padding:3px 14px;font-size:14px}.tip .ln.mute{font-size:12px;color:var(--mute)}
+.heat td.cell:hover{outline:2px solid var(--fg);outline-offset:-2px}
+.tip .tl{flex:1;color:var(--mute)}.tip .tv{font-weight:700;font-variant-numeric:tabular-nums;margin-left:12px}
+.banner-actions{display:flex;gap:8px;align-items:center}.banner .x{border:none;background:transparent;font-size:20px;line-height:1;padding:0 6px;color:var(--mute)}.banner .x:hover{color:var(--fg)}
+.card.warn{border:2px solid var(--warn);background:var(--warnbg)}.warn-title{font-size:17px;font-weight:700;color:var(--warn);margin-bottom:10px}
+pre.keybox{font-size:15px;font-weight:700;border:1px dashed var(--warn);background:var(--card);padding:10px 12px;user-select:all;word-break:break-all;white-space:pre-wrap}
 @media(max-width:700px){.tiles,.two{grid-template-columns:1fr}.summary{gap:16px}header{padding:12px 16px}}
 </style>
 </head>
@@ -76,8 +88,8 @@ const I18N = {
     colTime: 'Time', colEvent: 'Event', colEnv: 'Environment', colParams: 'Parameters',
     sysParams: n => `System parameters (${n})`,
     basicInfo: 'General', retention: 'Data retention', daysUnit: 'days', save: 'Save', appId: 'App ID: ',
-    writeKeys: 'Write API keys (write-only, cannot read data)', keyLabelPh: 'Label, e.g. ios-prod', issueKey: 'Issue new key',
-    colLabel: 'Label', colPrefix: 'Prefix', colCreated: 'Created', revoked: 'Revoked', revoke: 'Revoke',
+    writeKeys: 'Write API keys (write-only, cannot read data)', keyLabelPh: 'Name, e.g. ios-prod', labelRequired: 'A name is required.', issueKey: 'Issue new key',
+    colLabel: 'Name', colPrefix: 'Prefix', colCreated: 'Created', revoked: 'Revoked', revoke: 'Revoke',
     revokeConfirm: 'Clients using this key will no longer be able to report. Continue?',
     newKeyTitle: 'New key (shown only once, save it now)',
     danger: 'Danger zone', deleteApp: 'Delete app and all its data',
@@ -94,6 +106,8 @@ Values (never invent them; if one is still a <placeholder>, ask me):
 - Server URL: <SERVER_URL>
 - Write key:  <WRITE_KEY>
 - App ID:     <APP_ID>
+Use these same values on every platform of this app (iOS, Android, ...): do not create a second
+app. The admin UI tells the platforms apart by itself.
 
 Steps:
 1. Detect the platform and build system. Say which route below you use before editing files.
@@ -119,6 +133,9 @@ Steps:
    (401 = wrong key, 503 = busy.) Then tell me how to see the event: admin UI -> your app ->
    Events page (it includes test data).
 4. Keep the change minimal: only what is needed to connect. Do not add other events or refactor.`,
+    dismiss: 'Dismiss',
+    retAfter: (p, n) => n === 0 ? `${p}% in the first week` : `${p}% after ${n} week${n === 1 ? '' : 's'}`, retFirst: d => `First appeared the week of ${d}`, retCount: (u, s) => `${u} of ${s} users`,
+    allPlatforms: 'All platforms', platformLabel: 'Platform',
     refresh: 'Refresh', autoRefresh: 'Auto refresh', autoOff: 'Off (manual)', auto10: 'Every 10 s', auto30: 'Every 30 s',
     auto60: 'Every 1 min', auto300: 'Every 5 min', updatedAt: ts => `Updated ${ts}`, refreshFailed: 'Refresh failed',
   },
@@ -146,8 +163,8 @@ Steps:
     colTime: '时间', colEvent: '事件', colEnv: '环境', colParams: '参数',
     sysParams: n => `系统参数 (${n})`,
     basicInfo: '基本信息', retention: '数据保留', daysUnit: '天', save: '保存', appId: 'App ID: ',
-    writeKeys: '写入 API key(只能写入,不能读取)', keyLabelPh: '备注,如 ios-prod', issueKey: '签发新 key',
-    colLabel: '备注', colPrefix: '前缀', colCreated: '创建时间', revoked: '已吊销', revoke: '吊销',
+    writeKeys: '写入 API key(只能写入,不能读取)', keyLabelPh: '名称,如 ios-prod', labelRequired: '名称必填。', issueKey: '签发新 key',
+    colLabel: '名称', colPrefix: '前缀', colCreated: '创建时间', revoked: '已吊销', revoke: '吊销',
     revokeConfirm: '吊销后使用该 key 的客户端将无法上报,确定?',
     newKeyTitle: '新 key(仅显示这一次,请立即保存)',
     danger: '危险操作', deleteApp: '删除 App 及全部数据',
@@ -163,6 +180,7 @@ Steps:
 - 服务器地址: <SERVER_URL>
 - 写入 key:   <WRITE_KEY>
 - App ID:     <APP_ID>
+这个应用的所有平台(iOS、Android 等)都使用同样的这三个值:不要另建应用。管理界面会自己区分平台。
 
 步骤:
 1. 识别平台和构建系统。修改文件之前,先说明你要用下面哪种方式。
@@ -188,6 +206,9 @@ Steps:
    (401 = key 错误,503 = 服务繁忙。)然后告诉我在哪里看到这条事件:管理界面 → 你的 App →
    「事件」页(包含测试数据)。
 4. 改动保持最小:只做接入所需的部分,不要添加其他事件,也不要重构。`,
+    dismiss: '关闭',
+    retAfter: (p, n) => n === 0 ? `首周 ${p}%` : `${n} 周后留存 ${p}%`, retFirst: d => `首次出现于 ${d} 当周`, retCount: (u, s) => `${s} 人中的 ${u} 人`,
+    allPlatforms: '全部平台', platformLabel: '平台',
     refresh: '刷新', autoRefresh: '自动刷新', autoOff: '关闭(手动)', auto10: '每 10 秒', auto30: '每 30 秒',
     auto60: '每 1 分钟', auto300: '每 5 分钟', updatedAt: ts => `更新于 ${ts}`, refreshFailed: '刷新失败',
   },
@@ -236,11 +257,22 @@ const cityName = c => c && c.replace(/ \(.*\)$/, '');   // older rows may still 
 // Values that come from clients (versions, labels …) must be escaped before they go into SVG/HTML strings.
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// Dismissible hints: remembered in the browser per app and view; falls back to this page load if storage is unavailable.
+const dismissed = new Set();
+const hintHidden = k => dismissed.has(k) || (() => { try { return localStorage.getItem(k) === '1'; } catch { return false; } })();
+const hintDismiss = k => { dismissed.add(k); try { localStorage.setItem(k, '1'); } catch {} };
+
 // ---- query state shared by the data pages ----
 const getQ = () => { try { return JSON.parse(sessionStorage.getItem('q')) || { days: 7, test: 0 }; } catch { return { days: 7, test: 0 }; } };
 const setQ = (k, v) => { const q = getQ(); q[k] = v; try { sessionStorage.setItem('q', JSON.stringify(q)); } catch {} };
 const tzMin = () => -new Date().getTimezoneOffset();
-const qs = q => `days=${q.days}&test=${q.test}&tz=${tzMin()}`;
+const qs = q => `days=${q.days}&test=${q.test}&tz=${tzMin()}&platform=${encodeURIComponent(q.platform || '')}`;
+// The saved platform only counts if this app has seen it.
+const curQ = app => { const q = getQ(); if (q.platform && !(app.platforms || []).some(p => p.os === q.platform)) q.platform = ''; return q; };
+// Platform filter (iOS / Android / …): only shown when the app has data from more than one platform.
+const platformSelect = (app, onchange) => app.platforms.length < 2 ? null : h('select', { title: t('platformLabel'), 'aria-label': t('platformLabel'),
+  onchange: e => { setQ('platform', e.target.value); onchange(); } },
+  [h('option', { value: '' }, t('allPlatforms')), ...app.platforms.map(p => h('option', { value: p.os, selected: p.os === curQ(app).platform }, p.os))]);
 
 // ---- charts ----
 // Time buckets in the browser's local time zone, so a range with little data still spans the whole axis.
@@ -265,8 +297,40 @@ function axis(ticks, y, labels, fmtTick = fmt) {
 const ticksFor = max => max <= 2 ? [0, max] : [0, Math.round(max / 2), max];
 const svgBox = inner => { const d = h('div'); d.innerHTML = `<svg viewBox="0 0 ${G.W} ${G.H}">${inner}</svg>`; return d; };
 
-// Line or bar chart of one metric; hover any bucket for its exact value.
-function chart(series, key, bars) {
+// ---- hover card (shared by all charts) ----
+// A card that follows the mouse: bold date, then one row per series (colour dot, name, bold value). The hovered column is highlighted.
+const bucketTitle = k => {
+  const m = k.match(/^(\d{4})-(\d\d)-(\d\d)(?: (\d\d):00)?$/);
+  if (!m) return k;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0)), o = { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' };
+  return m[4] ? d.toLocaleString(loc(), { ...o, hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString(loc(), o);
+};
+let tipEl = null;
+const hideTip = () => { if (tipEl) tipEl.style.display = 'none'; };
+function showTip(info, e) {
+  if (!tipEl) { tipEl = h('div', { class: 'tip' }); document.body.append(tipEl); }
+  tipEl.replaceChildren(...(info.title ? [h('div', { class: 'tt' }, info.title)] : []),
+    h('div', { class: 'tb' }, info.lines ? info.lines.map(l => h('div', { class: l.mute ? 'ln mute' : 'ln' }, l.text))
+      : info.rows.map(r => h('div', { class: r.active ? 'tr act' : 'tr' }, h('i', { style: `background:${r.color}` }), h('span', { class: 'tl' }, r.label), h('span', { class: 'tv' }, r.value)))));
+  tipEl.style.display = 'block';
+  const w = tipEl.offsetWidth, hgt = tipEl.offsetHeight;   // keep the card inside the window
+  tipEl.style.left = Math.max(8, Math.min(e.clientX + 16, innerWidth - w - 8)) + 'px';
+  tipEl.style.top = Math.max(8, e.clientY + 16 + hgt > innerHeight ? e.clientY - hgt - 12 : e.clientY + 16) + 'px';
+}
+// info(i) -> { title?, rows: [{ color, label, value }] } or { title?, lines: [{ text, mute? }] }; hit elements carry data-i.
+function bindTip(box, info, onHide) {
+  const hide = () => { hideTip(); if (onHide) onHide(); };
+  box.addEventListener('mousemove', e => { const i = e.target.dataset && e.target.dataset.i; if (i === undefined) hide(); else showTip(info(+i, e), e); });
+  box.addEventListener('mouseleave', hide);
+  return box;
+}
+// Pointer position in the SVG's own coordinate system (the chart is scaled by CSS).
+const svgPoint = (svg, e) => { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
+const num = n => Number(n).toLocaleString(loc());
+const hitRects = (n, L, step, T, ih) => Array.from({ length: n }, (_, i) => `<rect class="hit" data-i="${i}" x="${L + step * i}" y="${T}" width="${step}" height="${ih}"/>`).join('');
+
+// Line or bar chart of one metric; `name` labels the value in the hover card.
+function chart(series, key, bars, name) {
   const { W, L, R, T, B, H } = G, iw = W - L - R, ih = H - T - B, n = Math.max(series.length, 1), step = iw / n;
   const max = Math.max(1, ...series.map(s => s[key])), y = v => T + ih - v / max * ih, cx = i => L + step * i + step / 2;
   let body;
@@ -277,8 +341,8 @@ function chart(series, key, bars) {
     body = `<polyline points="${series.map((s, i) => `${cx(i)},${y(s[key])}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2"/>` +
       series.map((s, i) => `<circle cx="${cx(i)}" cy="${y(s[key])}" r="2.5" fill="var(--accent)"/>`).join('');
   }
-  const hit = series.map((s, i) => `<rect x="${L + step * i}" y="${T}" width="${step}" height="${ih}" fill="transparent"><title>${esc(s.t)}: ${s[key]}</title></rect>`).join('');
-  return svgBox(axis(ticksFor(max), y, series.map(s => s.t)) + body + hit);
+  return bindTip(svgBox(axis(ticksFor(max), y, series.map(s => s.t)) + body + hitRects(series.length, L, step, T, ih)),
+    i => ({ title: bucketTitle(series[i].t), rows: [{ color: 'var(--accent)', label: name || key, value: num(series[i][key]) }] }));
 }
 
 // Stacked bars: buckets = [{t, v: {key: n}}], defs = [{k, label, color}]; percent normalizes every bar to 100%.
@@ -286,19 +350,31 @@ function stacked(buckets, defs, percent) {
   const { W, L, R, T, B, H } = G, iw = W - L - R, ih = H - T - B, n = Math.max(buckets.length, 1), step = iw / n, w = Math.min(28, Math.max(2, step - 2));
   const tot = b => defs.reduce((a, d) => a + (b.v[d.k] || 0), 0);
   const max = percent ? 100 : Math.max(1, ...buckets.map(tot)), y = v => T + ih - v / max * ih;
-  let body = '', hit = '';
+  let body = '';
   buckets.forEach((b, i) => {
     const total = tot(b); let acc = 0; const x = L + step * i + (step - w) / 2;
     for (const d of defs) {
       const raw = b.v[d.k] || 0, v = percent ? (total ? raw / total * 100 : 0) : raw;
-      if (v > 0) body += `<rect x="${x}" y="${y(acc + v)}" width="${w}" height="${y(acc) - y(acc + v)}" fill="${d.color}"/>`;
+      if (v > 0) body += `<rect class="seg" data-k="${esc(d.k)}" x="${x}" y="${y(acc + v)}" width="${w}" height="${y(acc) - y(acc + v)}" fill="${d.color}"/>`;
       acc += v;
     }
-    const tip = defs.filter(d => b.v[d.k]).map(d => `${d.label}: ${b.v[d.k]}${percent && total ? ` (${Math.round(b.v[d.k] / total * 100)}%)` : ''}`).join('\n');
-    hit += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${ih}" fill="transparent"><title>${esc(b.t + (tip ? '\n' + tip : ''))}</title></rect>`;
   });
-  const box = svgBox(axis(percent ? [0, 50, 100] : ticksFor(max), y, buckets.map(b => b.t), percent ? v => v + '%' : fmt) + body + hit);
-  box.append(h('div', { class: 'legend' }, defs.map(d => h('span', {}, h('i', { style: `background:${d.color}` }), d.label))));
+  // Focus: the series under the pointer keeps its colour in every column, all others fade; legend and hover card follow.
+  let focus = null;
+  const setFocus = k => {
+    if (k === focus) return;
+    focus = k;
+    box.querySelectorAll('rect.seg').forEach(el => { el.style.opacity = k === null ? '' : (el.dataset.k === k ? '1' : '.18'); });
+    box.querySelectorAll('.legend span').forEach(el => { el.style.opacity = k === null || el.dataset.k === k ? '' : '.4'; el.style.fontWeight = el.dataset.k === k ? '700' : ''; el.style.color = el.dataset.k === k ? 'var(--fg)' : ''; });
+  };
+  const box = bindTip(svgBox(axis(percent ? [0, 50, 100] : ticksFor(max), y, buckets.map(b => b.t), percent ? v => v + '%' : fmt) + body + hitRects(buckets.length, L, step, T, ih)), (i, e) => {
+    const b = buckets[i], total = tot(b), val = (T + ih - svgPoint(box.querySelector('svg'), e).y) / ih * max;
+    let acc = 0, active = null;   // walk this column's stack from the bottom to find the segment at the pointer
+    for (const d of defs) { const raw = b.v[d.k] || 0, v = percent ? (total ? raw / total * 100 : 0) : raw; if (val >= acc && val < acc + v) { active = d.k; break; } acc += v; }
+    setFocus(active);
+    return { title: bucketTitle(b.t), rows: defs.filter(d => b.v[d.k]).map(d => ({ color: d.color, label: d.label, active: d.k === active, value: percent ? (b.v[d.k] / total * 100).toFixed(2) + '%' : num(b.v[d.k]) })) };
+  }, () => setFocus(null));
+  box.append(h('div', { class: 'legend' }, defs.map(d => h('span', { 'data-k': d.k }, h('i', { style: `background:${d.color}` }), d.label))));
   return box;
 }
 
@@ -390,34 +466,37 @@ const appShell = (app, tab, ...kids) => {
 const RANGES = () => [[1, t('range1')], [7, t('range7')], [30, t('range30')], [90, t('range90')]];
 async function liveView(app, tab, build) {
   const content = h('div'), status = h('span', { class: 'mute' });
-  const update = async () => content.replaceChildren(...await build(getQ()));
+  // build() may return null entries (e.g. no banner); replaceChildren would turn them into the text "null".
+  const update = async () => content.replaceChildren(...(await build(curQ(app))).filter(Boolean));
   await update();
   status.textContent = t('updatedAt', nowLabel());
   const controls = refreshControls(update, status);
   const sel = (k, opts) => h('select', { onchange: e => { setQ(k, +e.target.value); controls[0].click(); } },
     opts.map(([v, l]) => h('option', { value: v, selected: v === getQ()[k] }, l)));
-  return appShell(app, tab, h('div', { class: 'row' }, sel('days', RANGES()), sel('test', [[0, t('live')], [1, t('testData')]]), h('span', { class: 'sp' }), ...controls), content);
+  return appShell(app, tab, h('div', { class: 'row' }, sel('days', RANGES()), sel('test', [[0, t('live')], [1, t('testData')]]), platformSelect(app, () => controls[0].click()), h('span', { class: 'sp' }), ...controls), content);
 }
 
 const card = (title, ...kids) => h('div', { class: 'card' }, h('h3', {}, title), ...kids);
 
 // Weekly cohorts: share of each cohort that is active in the following weeks.
 function retentionChart(r) {
-  const cells = {}, cohorts = [...new Set(r.rows.map(x => x.cohort))].sort((a, b) => a - b);
+  const cells = {}, cohorts = [...new Set(r.rows.map(x => x.cohort))].sort((a, b) => a - b), tips = [];
   for (const x of r.rows) (cells[x.cohort] ??= {})[x.n] = x.users;
   const cur = Math.floor((Date.now() + tzMin() * 60000 + r.mon_ms) / r.week_ms), cols = [...Array(8).keys()];
   if (!cohorts.length) return h('div', { class: 'mute' }, t('noData'));
-  return h('table', { class: 'heat' },
+  return bindTip(h('table', { class: 'heat' },
     h('thead', {}, h('tr', {}, h('th', {}, t('cohort')), cols.map(n => h('th', {}, t('weekN', n))))),
     h('tbody', {}, cohorts.map(c => {
-      const size = cells[c][0] || 0, label = new Date(c * r.week_ms - r.mon_ms).toISOString().slice(0, 10);
-      return h('tr', {}, h('td', { title: t('nUsers', size) }, label, h('span', { class: 'mute' }, ` · ${size}`)),
+      const monday = new Date(c * r.week_ms - r.mon_ms), size = cells[c][0] || 0, label = monday.toISOString().slice(0, 10);
+      const first = monday.toLocaleDateString(loc(), { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+      return h('tr', {}, h('td', {}, label, h('span', { class: 'mute' }, ` · ${size}`)),
         cols.map(n => {
           if (c + n > cur || !size) return h('td', {});
-          const pct = (cells[c][n] || 0) / size;
-          return h('td', { class: 'cell', style: `background:rgba(76,120,255,${(0.08 + 0.85 * pct).toFixed(2)})`, title: `${t('nUsers', cells[c][n] || 0)} / ${size}` }, Math.round(pct * 100) + '%');
+          const users = cells[c][n] || 0, pct = users / size;
+          tips.push({ lines: [{ text: t('retAfter', (pct * 100).toFixed(2), n) }, { text: t('retFirst', first) }, { text: t('retCount', users, size), mute: true }] });
+          return h('td', { class: 'cell', 'data-i': tips.length - 1, style: `background:rgba(76,120,255,${(0.08 + 0.85 * pct).toFixed(2)})` }, Math.round(pct * 100) + '%');
         }));
-    })));
+    }))), i => tips[i]);
 }
 
 // Top 8 versions by users, everything else grouped as "other".
@@ -434,13 +513,15 @@ async function overviewView(app) {
   const dims = ['app_version', 'os_version', 'device_model', 'locale', 'country', 'city'];
   return liveView(app, 'overview', async q => {
     const [s, ret, ver] = await Promise.all([api('GET', `/apps/${app.id}/stats?${qs(q)}`), api('GET', `/apps/${app.id}/retention?${qs(q)}`), api('GET', `/apps/${app.id}/versions?${qs(q)}`)]);
-    const tot = s.totals || { events: 0, users: 0, sessions: 0 }, other = q.test ? 0 : 1;
+    const tot = s.totals || { events: 0, users: 0, sessions: 0 }, other = q.test ? 0 : 1, hintKey = `hide-hint:${app.id}:${q.test ? 'live-hidden' : 'test-hidden'}`;
     return [
-      s.other_events > 0 ? h('div', { class: 'banner' }, h('span', {}, t(q.test ? 'hiddenLive' : 'hiddenTest', s.other_events)),
-        h('button', { onclick: () => { setQ('test', other); route(); } }, t(q.test ? 'switchLive' : 'switchTest'))) : null,
+      s.other_events > 0 && !hintHidden(hintKey) ? h('div', { class: 'banner' }, h('span', {}, t(q.test ? 'hiddenLive' : 'hiddenTest', s.other_events)),
+        h('span', { class: 'banner-actions' },
+          h('button', { onclick: () => { setQ('test', other); route(); } }, t(q.test ? 'switchLive' : 'switchTest')),
+          h('button', { class: 'x', title: t('dismiss'), 'aria-label': t('dismiss'), onclick: e => { hintDismiss(hintKey); e.currentTarget.closest('.banner').remove(); } }, '×'))) : null,
       h('div', { class: 'tiles' }, [[t('lastHour'), s.last_hour_users], [t('activeUsers'), tot.users], [t('events'), tot.events], [t('sessions'), tot.sessions]].map(([l, v]) =>
         h('div', { class: 'card tile' }, h('b', {}, fmt(v)), h('span', {}, l)))),
-      h('div', { class: 'two' }, card(t('activeUsers'), chart(fillSeries(s.series, q.days), 'users')), card(t('events'), chart(fillSeries(s.series, q.days), 'events', true))),
+      h('div', { class: 'two' }, card(t('activeUsers'), chart(fillSeries(s.series, q.days), 'users', false, t('activeUsers'))), card(t('events'), chart(fillSeries(s.series, q.days), 'events', true, t('events')))),
       h('div', { class: 'two' }, card(t('retentionTitle'), retentionChart(ret)), card(t('versionsTitle'), versionsChart(ver, q.days))),
       card(t('topEvents'), bars(s.top, 'events', r => h('span', { class: 'mute' }, ' · ' + t('nUsers', fmt(r.users))))),
       h('div', { class: 'two' }, dims.map(k => card(t('dim_' + k) + t('usersSuffix'), bars(s.dims[k], 'users', null, k === 'country' ? countryName : undefined)))),
@@ -455,7 +536,7 @@ async function usersView(app) {
     const mix = keys.map(k => ({ t: k, v: { new: nw[k] || 0, ret: Math.max((ac[k] || 0) - (nw[k] || 0), 0) } }));
     return [
       h('div', { class: 'two' },
-        card(t('newUsers'), chart(keys.map(k => ({ t: k, users: nw[k] || 0 })), 'users', true)),
+        card(t('newUsers'), chart(keys.map(k => ({ t: k, users: nw[k] || 0 })), 'users', true, t('newUsers'))),
         card(t('newVsReturning'), stacked(mix, [{ k: 'new', label: t('newUsers'), color: PALETTE[0] }, { k: 'ret', label: t('returning'), color: PALETTE[1] }], false))),
       h('div', { class: 'mute' }, t('newNote')),
     ];
@@ -478,7 +559,7 @@ async function errorsView(app) {
     const e = await api('GET', `/apps/${app.id}/errors?${qs(q)}`);
     if (!e.top.length) return [h('div', { class: 'card mute' }, t('noErrors')), h('div', { class: 'mute' }, t('errorsNote'))];
     return [
-      card(t('errorsTitle'), chart(fillSeries(e.series, q.days), 'events', true)),
+      card(t('errorsTitle'), chart(fillSeries(e.series, q.days), 'events', true, t('events'))),
       h('div', { class: 'card', style: 'overflow:auto' }, h('table', {},
         h('thead', {}, h('tr', {}, ['errId', 'errCategory', 'errMessage'].map(x => h('th', {}, t(x))), ['colEvents', 'colUsers'].map(x => h('th', { class: 'num' }, t(x))), h('th', {}, t('colLast')))),
         h('tbody', {}, e.top.map(r => h('tr', {}, h('td', {}, r.err_id ?? '—'), h('td', { class: 'mute' }, r.err_category ?? ''), h('td', { class: 'mute' }, r.err_message ?? ''),
@@ -507,7 +588,7 @@ async function eventsView(app) {
   const tbody = h('tbody'), more = h('button', {}, t('loadMore')), type = h('input', { placeholder: t('filterPh'), value: kind }), status = h('span', { class: 'mute' });
   const load = async (reset, force) => {
     const before = !reset && rows.length ? `&before=${rows.at(-1).id}` : '';
-    const page = await api('GET', `/apps/${app.id}/events?limit=100&type=${encodeURIComponent(kind)}${before}`);
+    const page = await api('GET', `/apps/${app.id}/events?limit=100&type=${encodeURIComponent(kind)}&platform=${encodeURIComponent(curQ(app).platform || '')}${before}`);
     // On refresh, leave the DOM alone when nothing is new so expanded parameters stay open (new events always have a larger id).
     if (reset && !force && rows.length && page[0]?.id === rows[0].id) return;
     if (reset) { rows = []; tbody.replaceChildren(); }
@@ -523,7 +604,7 @@ async function eventsView(app) {
   const controls = refreshControls(() => load(true), status);
   type.addEventListener('keydown', e => { if (e.key === 'Enter') { kind = type.value.trim(); load(true, true); } });
   more.addEventListener('click', () => load(false));
-  return appShell(app, 'events', h('div', { class: 'row' }, type, h('span', { class: 'mute' }, t('filterHint')), h('span', { class: 'sp' }), ...controls),
+  return appShell(app, 'events', h('div', { class: 'row' }, type, platformSelect(app, () => load(true, true)), h('span', { class: 'mute' }, t('filterHint')), h('span', { class: 'sp' }), ...controls),
     h('div', { class: 'card', style: 'overflow:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['colTime', 'colEvent', 'colEnv', 'colParams'].map(x => h('th', {}, t(x))))), tbody)), more);
 }
 
@@ -532,9 +613,15 @@ async function eventsView(app) {
 const agentPrompt = (app, key) => t('agentPrompt').split('<SERVER_URL>').join(location.origin).split('<APP_ID>').join(app.id).split('<WRITE_KEY>').join(key || '<WRITE_KEY>');
 
 async function settingsView(app) {
-  const keys = await api('GET', `/apps/${app.id}/keys`);
   const name = h('input', { value: app.name }), days = h('input', { type: 'number', value: app.retention_days, style: 'width:90px' });
-  const label = h('input', { placeholder: t('keyLabelPh') }), fresh = h('div');
+  // The key name is required; it defaults to the current local time, e.g. "2026-11-08 06:20".
+  const stamp = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+  const label = h('input', { placeholder: t('keyLabelPh'), value: stamp(), maxlength: 100 }), fresh = h('div'), labelErr = h('span', { class: 'mute', style: 'color:var(--danger)' });
+  // The key list is re-fetched and redrawn on its own, so a freshly issued key card stays on screen.
+  const keysBody = h('tbody');
+  const loadKeys = async () => keysBody.replaceChildren(...(await api('GET', `/apps/${app.id}/keys`)).map(k => h('tr', {}, h('td', {}, k.label), h('td', { class: 'm' }, k.prefix + '…'), h('td', {}, when(k.created_at)),
+    h('td', {}, k.revoked_at ? h('span', { class: 'mute' }, t('revoked')) : h('a', { onclick: async () => { if (confirm(t('revokeConfirm'))) { await api('DELETE', `/keys/${k.id}`); await loadKeys(); } } }, t('revoke'))))));
+  await loadKeys();
   const origin = location.origin;
   const promptBox = h('textarea', { readonly: true, rows: 14, spellcheck: 'false' }), promptNote = h('div', { class: 'mute' }, t('agentNoKey')), copied = h('span', { class: 'mute' });
   promptBox.value = agentPrompt(app, null);
@@ -542,25 +629,31 @@ async function settingsView(app) {
     try { await navigator.clipboard.writeText(promptBox.value); } catch { promptBox.select(); document.execCommand('copy'); }
     copied.textContent = t('agentCopied'); setTimeout(() => { copied.textContent = ''; }, 2000);
   };
+  let issuing = false;
   const mk = async () => {
-    const { key } = await api('POST', `/apps/${app.id}/keys`, { label: label.value });
+    if (issuing) return;
+    if (!label.value.trim()) { labelErr.textContent = t('labelRequired'); label.focus(); return; }
+    labelErr.textContent = ''; issuing = true;
+    let key;
+    try { ({ key } = await api('POST', `/apps/${app.id}/keys`, { label: label.value.trim() })); }
+    catch (e) { if (e.message !== 'unauth') labelErr.textContent = t('refreshFailed'); return; }
+    finally { issuing = false; }
     promptBox.value = agentPrompt(app, key); promptNote.textContent = t('agentKeyFilled');
-    fresh.replaceChildren(h('div', { class: 'card' }, h('b', {}, t('newKeyTitle')), h('pre', {}, key),
+    fresh.replaceChildren(h('div', { class: 'card warn' }, h('div', { class: 'warn-title' }, '⚠ ' + t('newKeyTitle')), h('pre', { class: 'keybox' }, key),
       h('h3', {}, 'TelemetryDeck SDK (Swift)'),
       h('pre', {}, `let config = TelemetryDeck.Config(appID: "${app.id}", baseURL: URL(string: "${origin}/k/${key}/")!)\nTelemetryDeck.initialize(config: config)`),
       h('h3', {}, 'OpenTelemetry (OTLP/HTTP Logs)'),
       h('pre', {}, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${origin}/v1/logs\nOTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf\nOTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${key}`)));
-    label.value = '';
+    label.value = stamp();
+    await loadKeys();
   };
   return appShell(app, 'settings',
     h('div', { class: 'card' }, h('h3', {}, t('basicInfo')), h('div', { class: 'row' }, name, t('retention'), days, t('daysUnit'),
       h('button', { class: 'p', onclick: async () => { await api('PATCH', `/apps/${app.id}`, { name: name.value, retention_days: +days.value }); route(); } }, t('save'))),
       h('div', { class: 'mute' }, t('appId'), app.id)),
     h('div', { class: 'card' }, h('h3', {}, t('writeKeys')),
-      h('div', { class: 'row' }, label, h('button', { class: 'p', onclick: mk }, t('issueKey'))), fresh,
-      h('table', {}, h('thead', {}, h('tr', {}, ['colLabel', 'colPrefix', 'colCreated', ''].map(x => h('th', {}, x && t(x))))),
-        h('tbody', {}, keys.map(k => h('tr', {}, h('td', {}, k.label), h('td', { class: 'm' }, k.prefix + '…'), h('td', {}, when(k.created_at)),
-          h('td', {}, k.revoked_at ? h('span', { class: 'mute' }, t('revoked')) : h('a', { onclick: async () => { if (confirm(t('revokeConfirm'))) { await api('DELETE', `/keys/${k.id}`); route(); } } }, t('revoke')))))))),
+      h('div', { class: 'row' }, label, h('button', { class: 'p', onclick: mk }, t('issueKey')), labelErr), fresh,
+      h('table', {}, h('thead', {}, h('tr', {}, ['colLabel', 'colPrefix', 'colCreated', ''].map(x => h('th', {}, x && t(x))))), keysBody)),
     h('div', { class: 'card' }, h('h3', {}, t('agentTitle')), h('div', { class: 'mute', style: 'margin-bottom:8px' }, t('agentHint')), promptBox,
       h('div', { class: 'row', style: 'margin:8px 0 0' }, h('button', { class: 'p', onclick: copyPrompt }, t('agentCopy')), copied, h('span', { class: 'sp' }), promptNote)),
     h('div', { class: 'card' }, h('h3', {}, t('danger')),
@@ -575,8 +668,8 @@ async function route() {
     let view;
     if (parts[0] === 'login') view = loginView();
     else if (parts[0] === 'app' && parts[1]) {
-      const [app, summary, apps] = await Promise.all([api('GET', `/apps/${parts[1]}`), api('GET', `/apps/${parts[1]}/summary`), api('GET', '/apps')]);
-      app.summary = summary; app.apps = apps;
+      const [app, summary, apps, platforms] = await Promise.all([api('GET', `/apps/${parts[1]}`), api('GET', `/apps/${parts[1]}/summary`), api('GET', '/apps'), api('GET', `/apps/${parts[1]}/platforms`)]);
+      app.summary = summary; app.apps = apps; app.platforms = platforms;
       view = await (VIEWS[parts[2]] || overviewView)(app);
     } else view = await appsView();
     $app.replaceChildren(view);

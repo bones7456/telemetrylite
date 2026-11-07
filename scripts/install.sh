@@ -14,7 +14,8 @@ set -eu
 
 REPO="${TL_REPO:-__REPO__}"
 DOMAIN=""; EMAIL=""; VERSION="latest"; PORT=8888; GEOIP=true; BIN=""
-DRY=0; YES=0; UNINSTALL=0
+DRY=0; YES=0; UNINSTALL=0; FORCE=0; REWRITE=0; GEOIP_SET=0; LANG_SET=0
+BIN_PATH=/usr/local/bin/telemetrylite
 L=en
 case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in zh*) L=zh;; esac
 UNIT=/etc/systemd/system/telemetrylite.service
@@ -37,6 +38,8 @@ usage() {
   --no-geoip     不启用 GeoIP 自动下载
   --bin PATH     使用本地二进制而不是下载(从源码部署时用)
   --lang en|zh   输出语言(默认按系统语言,否则英文)
+  --force        即使已是最新版本也重新安装并重启
+  --rewrite-unit 按当前设置重新生成 systemd service 文件(会覆盖你对它的手动修改,建议用 systemctl edit)
   --dry-run      只探测环境并打印计划,不做任何修改
   --yes          跳过开始前的 5 秒等待
   --uninstall    卸载服务与二进制(保留 /var/lib/telemetrylite 数据)
@@ -52,6 +55,8 @@ Usage: install.sh [options]
   --no-geoip     do not enable automatic GeoIP download
   --bin PATH     use a local binary instead of downloading (for source deployments)
   --lang en|zh   output language (default: from your locale, else English)
+  --force        reinstall and restart even if the installed version is already the latest
+  --rewrite-unit regenerate the systemd service file from the current settings (overwrites hand edits; prefer `systemctl edit`)
   --dry-run      only inspect the environment and print the plan; change nothing
   --yes          skip the 5 second wait before starting
   --uninstall    remove the service and binary (keeps the /var/lib/telemetrylite data)
@@ -63,9 +68,11 @@ while [ $# -gt 0 ]; do
   case $1 in
     --domain|--email|--version|--port|--bin|--lang) [ $# -ge 2 ] || die "$1 needs a value" "$1 需要一个参数"; v=$2
       case $1 in --domain) DOMAIN=$v;; --email) EMAIL=$v;; --version) VERSION=$v;; --port) PORT=$v;; --bin) BIN=$v;;
-        --lang) case $v in en|zh) L=$v;; *) die "--lang must be en or zh" "--lang 只能是 en 或 zh";; esac;; esac
+        --lang) case $v in en|zh) L=$v; LANG_SET=1;; *) die "--lang must be en or zh" "--lang 只能是 en 或 zh";; esac;; esac
       shift 2;;
-    --no-geoip) GEOIP=false; shift;;
+    --no-geoip) GEOIP=false; GEOIP_SET=1; shift;;
+    --force) FORCE=1; shift;;
+    --rewrite-unit) REWRITE=1; shift;;
     --dry-run) DRY=1; shift;;
     --yes) YES=1; shift;;
     --uninstall) UNINSTALL=1; shift;;
@@ -99,12 +106,20 @@ else die "curl or wget is required" "需要 curl 或 wget"; fi
 
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then INIT=systemd; else INIT=none; fi
 
+# Installed = a binary or a service file exists (hosts without systemd have no service file).
+# 已安装 = 存在二进制或 service 文件(没有 systemd 的机器没有 service 文件)。
 MODE=install
+if [ -f "$UNIT" ] || [ -x "$BIN_PATH" ]; then MODE=upgrade; fi
+U_GEOIP=""; U_LANG=""
 if [ -f "$UNIT" ]; then
-  MODE=upgrade
   p=$(sed -n 's/^Environment=TL_LISTEN=.*:\([0-9][0-9]*\)$/\1/p' "$UNIT" | head -n 1)
   [ -z "$p" ] || PORT=$p
+  U_GEOIP=$(sed -n 's/^Environment=TL_GEOIP_AUTO_UPDATE=//p' "$UNIT" | head -n 1)
+  U_LANG=$(sed -n 's/^Environment=TL_LANG=//p' "$UNIT" | head -n 1)
+  # an upgrade keeps the existing settings unless you pass an option explicitly
+  [ "$GEOIP_SET" = 1 ] || [ -z "$U_GEOIP" ] || GEOIP=$U_GEOIP
 fi
+UNIT_LANG=$L; if [ "$LANG_SET" = 0 ] && [ -n "$U_LANG" ]; then UNIT_LANG=$U_LANG; fi
 
 port_busy() {
   command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":$PORT\$"
@@ -139,24 +154,79 @@ if [ "$UNINSTALL" = 1 ]; then
     $SUDO systemctl disable --now telemetrylite 2>/dev/null || true
     $SUDO rm -f "$UNIT"; $SUDO systemctl daemon-reload
   fi
-  $SUDO rm -f /usr/local/bin/telemetrylite
+  $SUDO rm -f /usr/local/bin/telemetrylite /usr/local/bin/telemetrylite.prev
   if [ -f "$NGINX_CONF" ]; then $SUDO rm -f "$NGINX_CONF"; $SUDO nginx -t >/dev/null 2>&1 && $SUDO systemctl reload nginx || true; fi
   say "✔ Uninstalled. Your data is still in $DATA; to remove it too: sudo rm -rf $DATA" "✔ 已卸载。数据仍在 $DATA;如需彻底删除: sudo rm -rf $DATA"
   exit 0
 fi
+
+# ---------- Versions / 版本比较 ----------
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+ASSET="telemetrylite-$ARCH-linux"
+if [ "$VERSION" = latest ]; then BASE="https://github.com/$REPO/releases/latest/download"
+else BASE="https://github.com/$REPO/releases/download/$VERSION"; fi
+CUR=""; [ -x "$BIN_PATH" ] && CUR=$(sha_of "$BIN_PATH")
+WANT=""
+if [ -z "$BIN" ] && [ "$MODE" = upgrade ]; then
+  case $REPO in *__REPO*) ;; *)
+    if dl "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" 2>/dev/null; then WANT=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}'); fi;; esac
+elif [ -n "$BIN" ] && [ -f "$BIN" ]; then WANT=$(sha_of "$BIN"); fi
+UPTODATE=0
+if [ "$MODE" = upgrade ] && [ "$FORCE" = 0 ] && [ "$REWRITE" = 0 ] && [ -n "$CUR" ] && [ "$WANT" = "$CUR" ]; then UPTODATE=1; fi
+short() { printf '%s' "$1" | cut -c1-8; }
+
+# The service file this installer would write (used for installs, --rewrite-unit and drift detection).
+gen_unit() {
+  cat <<UNIT_EOF
+[Unit]
+Description=TelemetryLite
+After=network.target
+
+[Service]
+User=telemetrylite
+WorkingDirectory=$DATA
+ExecStart=/usr/local/bin/telemetrylite
+Environment=TL_LISTEN=127.0.0.1:$PORT
+Environment=TL_DB_PATH=$DATA/telemetrylite.db
+Environment=TL_GEOIP_AUTO_UPDATE=$GEOIP
+Environment=TL_LANG=$UNIT_LANG
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=$DATA
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+}
 
 # ---------- Plan / 部署计划 ----------
 say "== TelemetryLite install ==" "== TelemetryLite 安装 =="
 say "  ⚠ USE ON YOUR OWN RISK: this script modifies the system with ${SUDO:-root} privileges (see below)" "  ⚠ USE ON YOUR OWN RISK:本脚本将以 ${SUDO:-root} 权限修改系统(见下)"
 say "Environment: Linux/$ARCH · privileges: ${SUDO:-root} · init system: $INIT · mode: $MODE" "环境:Linux/$ARCH · 权限: ${SUDO:-root} · 初始化系统: $INIT · 模式: $MODE"
 if [ -n "$BIN" ]; then say "Source: local file $BIN" "来源:本地文件 $BIN"; else say "Source: github.com/$REPO releases/$VERSION" "来源:github.com/$REPO releases/$VERSION"; fi
+if [ "$MODE" = upgrade ]; then
+  if [ "$UPTODATE" = 1 ]; then
+    say "Already up to date: the installed binary ($(short "$CUR")) matches the release. Nothing to do (use --force to reinstall)." "已是最新版本:已安装的二进制($(short "$CUR"))与发布版一致,无需操作(如需重新安装请加 --force)。"
+    exit 0
+  elif [ -n "$WANT" ] && [ -n "$CUR" ]; then
+    say "Update: installed $(short "$CUR") -> $(short "$WANT")" "更新:已安装 $(short "$CUR") -> $(short "$WANT")"
+  elif [ -z "$BIN" ]; then
+    say "Could not check the latest version; the release will be downloaded." "无法检查最新版本,将直接下载发布版。"
+  fi
+fi
 say "Will do:" "将执行:"
-say "  - install the binary to /usr/local/bin/telemetrylite" "  - 安装二进制到 /usr/local/bin/telemetrylite"
+say "  - install the binary to /usr/local/bin/telemetrylite (a copy of the current one is kept as telemetrylite.prev)" "  - 安装二进制到 /usr/local/bin/telemetrylite(当前版本会备份为 telemetrylite.prev)"
 if [ "$INIT" = systemd ]; then
   if [ "$MODE" = install ]; then
     say "  - create the system user telemetrylite, the data directory $DATA and the service $UNIT (listening on 127.0.0.1:$PORT, GeoIP auto download=$GEOIP)" "  - 创建系统用户 telemetrylite、数据目录 $DATA、服务 $UNIT(监听 127.0.0.1:$PORT,GeoIP 自动下载=$GEOIP)"
   else
-    say "  - restart the service (your existing service file and configuration are kept)" "  - 重启服务(保留现有 service 文件与配置)"
+    say "  - restart the service (existing service file and settings are kept); if the new version does not start, the previous binary is restored automatically" "  - 重启服务(保留现有 service 文件与配置);新版本起不来时自动恢复上一个二进制"
   fi
 else
   say "  - no systemd detected: only the binary is installed, no service is created; start instructions are printed at the end" "  - 未检测到 systemd:只安装二进制,不会创建服务,结束后给出手动启动方式"
@@ -176,22 +246,17 @@ fi
 [ "$YES" = 1 ] || { say "Starting in 5 seconds, press Ctrl-C to cancel..." "5 秒后开始,Ctrl-C 取消…"; sleep 5; }
 
 # ---------- Get the binary / 取得二进制 ----------
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 if [ -n "$BIN" ]; then
   [ -f "$BIN" ] || die "cannot find $BIN" "找不到 $BIN"
   cp "$BIN" "$TMP/bin"
 else
   case $REPO in *__REPO*) die "repository name not set: download this script from a Release, or set TL_REPO=owner/repo" "未设置仓库名:请从 Release 下载本脚本,或设置环境变量 TL_REPO=owner/repo";; esac
-  if [ "$VERSION" = latest ]; then base="https://github.com/$REPO/releases/latest/download"
-  else base="https://github.com/$REPO/releases/download/$VERSION"; fi
-  asset="telemetrylite-$ARCH-linux"
-  say "Downloading $asset ..." "下载 $asset …"
-  dl "$base/$asset" "$TMP/bin" || die "download failed: $base/$asset" "下载失败: $base/$asset"
-  dl "$base/SHA256SUMS" "$TMP/SHA256SUMS" || die "failed to download SHA256SUMS" "下载 SHA256SUMS 失败"
-  want=$(grep " $asset\$" "$TMP/SHA256SUMS" | awk '{print $1}')
-  if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$TMP/bin" | awk '{print $1}')
-  elif command -v shasum >/dev/null 2>&1; then got=$(shasum -a 256 "$TMP/bin" | awk '{print $1}')
-  else die "sha256sum is missing, cannot verify the download" "缺少 sha256sum,无法校验下载内容"; fi
+  say "Downloading $ASSET ..." "下载 $ASSET …"
+  dl "$BASE/$ASSET" "$TMP/bin" || die "download failed: $BASE/$ASSET" "下载失败: $BASE/$ASSET"
+  dl "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" || die "failed to download SHA256SUMS" "下载 SHA256SUMS 失败"
+  want=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
+  got=$(sha_of "$TMP/bin")
+  [ -n "$got" ] || die "sha256sum is missing, cannot verify the download" "缺少 sha256sum,无法校验下载内容"
   [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA256 verification failed, aborting" "SHA256 校验失败,已中止"
   say "✔ SHA256 verified" "✔ SHA256 校验通过"
 fi
@@ -201,9 +266,18 @@ chmod +x "$TMP/bin"
 if [ "$INIT" = systemd ]; then
   $SUDO systemctl stop telemetrylite 2>/dev/null || true   # do not overwrite a running binary
 fi
-$SUDO install -m 755 "$TMP/bin" /usr/local/bin/telemetrylite
-say "✔ Installed /usr/local/bin/telemetrylite" "✔ 已安装 /usr/local/bin/telemetrylite"
+# keep the current binary so a failed update can be rolled back
+HAVE_PREV=0
+if [ -x "$BIN_PATH" ] && $SUDO cp -p "$BIN_PATH" "$BIN_PATH.prev"; then HAVE_PREV=1; fi
+$SUDO install -m 755 "$TMP/bin" "$BIN_PATH"
+if [ "$MODE" = upgrade ]; then say "✔ Updated /usr/local/bin/telemetrylite" "✔ 已更新 /usr/local/bin/telemetrylite"
+else say "✔ Installed /usr/local/bin/telemetrylite" "✔ 已安装 /usr/local/bin/telemetrylite"; fi
 
+if [ "$INIT" != systemd ] && [ "$MODE" = upgrade ]; then
+  say ""
+  say "No systemd detected: restart your running telemetrylite process to use the new version. The previous binary is kept as $BIN_PATH.prev." "未检测到 systemd:请重启正在运行的 telemetrylite 进程以使用新版本。上一个二进制保留为 $BIN_PATH.prev。"
+  exit 0
+fi
 if [ "$INIT" != systemd ]; then
   say ""
   say "No systemd detected, run the process under your own supervisor, for example:" "未检测到 systemd,请自行托管进程,例如:"
@@ -212,36 +286,24 @@ if [ "$INIT" != systemd ]; then
   exit 0
 fi
 
-if [ "$MODE" = install ]; then
+if [ ! -f "$UNIT" ]; then
   getent passwd telemetrylite >/dev/null 2>&1 || {
     if command -v useradd >/dev/null 2>&1; then $SUDO useradd -r -m -d "$DATA" -s /usr/sbin/nologin telemetrylite
     else $SUDO adduser -S -h "$DATA" -s /sbin/nologin telemetrylite; fi
   }
   $SUDO mkdir -p "$DATA"; $SUDO chown telemetrylite "$DATA"
-  cat <<UNIT_EOF | $SUDO tee "$UNIT" >/dev/null
-[Unit]
-Description=TelemetryLite
-After=network.target
-
-[Service]
-User=telemetrylite
-WorkingDirectory=$DATA
-ExecStart=/usr/local/bin/telemetrylite
-Environment=TL_LISTEN=127.0.0.1:$PORT
-Environment=TL_DB_PATH=$DATA/telemetrylite.db
-Environment=TL_GEOIP_AUTO_UPDATE=$GEOIP
-Environment=TL_LANG=$L
-Restart=always
-RestartSec=2
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=$DATA
-
-[Install]
-WantedBy=multi-user.target
-UNIT_EOF
+  gen_unit | $SUDO tee "$UNIT" >/dev/null
 fi
 
+if [ "$MODE" = upgrade ] && [ -f "$UNIT" ]; then
+  gen_unit > "$TMP/unit.new"
+  if [ "$REWRITE" = 1 ]; then
+    $SUDO install -m 644 "$TMP/unit.new" "$UNIT"
+    say "✔ Service file regenerated ($UNIT)" "✔ 已重新生成 service 文件($UNIT)"
+  elif ! cmp -s "$TMP/unit.new" "$UNIT"; then
+    say "Note: $UNIT differs from what this installer would write (hand edits or an older installer). It was kept as is. Use --rewrite-unit to regenerate it; for custom settings prefer: systemctl edit telemetrylite" "提示:$UNIT 与当前安装脚本生成的内容不同(手动修改过,或来自旧版脚本),已保持不变。如需重新生成请加 --rewrite-unit;自定义设置建议用 systemctl edit telemetrylite"
+  fi
+fi
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable telemetrylite >/dev/null 2>&1
 $SUDO systemctl restart telemetrylite
@@ -251,6 +313,17 @@ until dl "http://127.0.0.1:$PORT/" /dev/null 2>/dev/null; do
   i=$((i + 1))
   if [ "$i" -ge 15 ]; then
     $SUDO journalctl -u telemetrylite -n 30 --no-pager || true
+    if [ "$MODE" = upgrade ] && [ "$HAVE_PREV" = 1 ]; then
+      warn "the new version did not start: rolling back to the previous binary" "新版本未能启动:正在回滚到上一个二进制"
+      $SUDO systemctl stop telemetrylite 2>/dev/null || true
+      $SUDO cp -p "$BIN_PATH.prev" "$BIN_PATH"
+      $SUDO systemctl restart telemetrylite
+      sleep 3
+      if dl "http://127.0.0.1:$PORT/" /dev/null 2>/dev/null; then
+        die "update failed and was rolled back: the previous version is running again (see the log above)" "更新失败,已回滚:上一个版本已重新运行(见上方日志)"
+      fi
+      die "update failed and the rollback did not bring the service back, see: journalctl -u telemetrylite" "更新失败,回滚后服务仍未恢复,请查看: journalctl -u telemetrylite"
+    fi
     die "the service did not become ready within 15 seconds, see the log above" "服务未能在 15 秒内就绪,见上方日志"
   fi
   sleep 1

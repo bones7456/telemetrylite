@@ -34,8 +34,31 @@ pub fn open(path: &str) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-pub fn init(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(SCHEMA)
+/// Database schema version, stored in `PRAGMA user_version`.
+/// Version 1 is the schema of every release so far. To change the schema, bump this and append a
+/// step to `MIGRATIONS` (step N upgrades version N to N+1); existing databases are migrated on start.
+const SCHEMA_VERSION: i64 = 1;
+const MIGRATIONS: &[&str] = &[];
+
+/// Creates missing tables and applies pending migrations. Refuses a database written by a newer
+/// version, so an older binary (e.g. after a rollback) never works on a schema it does not know.
+pub fn init(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let have: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if have > SCHEMA_VERSION {
+        return Err(format!("database schema version {have} is newer than this binary supports ({SCHEMA_VERSION}); upgrade telemetrylite").into());
+    }
+    conn.execute_batch(SCHEMA)?;
+    // A database from before versioning has user_version 0 and the version-1 schema.
+    for (i, step) in MIGRATIONS.iter().enumerate().skip(have.max(1) as usize - 1) {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(step)?;
+        tx.execute_batch(&format!("PRAGMA user_version = {}", i + 2))?;
+        tx.commit()?;
+    }
+    if have < SCHEMA_VERSION {
+        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+    }
+    Ok(())
 }
 
 pub fn meta_get(conn: &Connection, k: &str) -> Option<String> {
@@ -129,3 +152,40 @@ pub fn purge_expired(conn: &Connection) -> rusqlite::Result<usize> {
         if n < 10000 {return Ok(total);}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(c: &Connection) -> i64 {
+        c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn fresh_database_gets_current_version() {
+        let c = Connection::open_in_memory().unwrap();
+        init(&c).unwrap();
+        assert_eq!(version(&c), SCHEMA_VERSION);
+        init(&c).unwrap(); // idempotent
+    }
+
+    #[test]
+    fn unversioned_database_from_older_release_is_accepted() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap(); // what v0.1.x created: tables, user_version 0
+        c.execute("INSERT INTO app(id,name,created_at) VALUES('a','n',1)", []).unwrap();
+        init(&c).unwrap();
+        assert_eq!(version(&c), SCHEMA_VERSION);
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM app", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn newer_database_is_refused() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION + 1)).unwrap();
+        let err = init(&c).unwrap_err().to_string();
+        assert!(err.contains("newer than this binary"), "{err}");
+    }
+}
+

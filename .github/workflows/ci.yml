@@ -17,10 +17,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
 
+  # Black-box regression test of the real binary + checks of the shell scripts.
+  # 对真实二进制做黑盒回归测试,并检查 shell 脚本。
+  regress:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Shell scripts
+        run: |
+          shellcheck -s sh scripts/install.sh
+          shellcheck scripts/deploy.sh scripts/release.sh
+          TL_REPO=owner/repo sh scripts/install.sh --dry-run --lang en
+          TL_REPO=owner/repo sh scripts/install.sh --dry-run --lang zh --domain example.com
+      - run: cargo build --release --locked
+      - name: Regression test
+        run: python3 scripts/regress.py --spawn target/release/telemetrylite
+
   # 推送 v* 标签时:交叉编译 Linux 静态二进制并发布 Release(附 SHA256SUMS 与 install.sh)
+  # On a v* tag: cross-compile static Linux binaries, run the regression test on the x86_64 artifact, publish.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: [test, regress]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -40,6 +59,8 @@ jobs:
           # 把仓库名写进安装脚本,用户无需再指定
           sed "s|__REPO__|$GITHUB_REPOSITORY|" scripts/install.sh > dist/install.sh
           (cd dist && sha256sum telemetrylite-* > SHA256SUMS)
+      - name: Regression test on the artifact that will be published
+        run: python3 scripts/regress.py --spawn dist/telemetrylite-x86_64-linux
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

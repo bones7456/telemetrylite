@@ -9,6 +9,7 @@ A lightweight event-collection server: a single Rust binary plus SQLite. It acce
 - Ingest: `/k/<key>/v2/` (TelemetryDeck) and `/v1/logs` (OTLP, protobuf or JSON, gzip supported)
 - Never stores IP addresses; optional GeoIP (DB-IP City Lite) resolves country / region / city
 - Admin UI: overview (active users and events, weekly retention cohorts, app versions over time, top events, breakdowns by app version / OS / device / locale / country / city), new vs returning users, event types, errors, event browser, API key management; a hint when test-mode events are hidden; manual refresh (default) or optional auto refresh that only re-fetches data
+- **One app, several platforms**: iOS and Android (and macOS, watchOS, …) can share one app and key; a platform filter (taken from the SDK's operating-system parameter) narrows every page to one platform
 - **AI-assisted integration**: a copy-and-paste prompt for your coding agent, generated per app with everything filled in (English and Chinese)
 - Design notes: [DESIGN.md](DESIGN.md)
 
@@ -54,11 +55,11 @@ The script inspects the environment first, then picks how to deploy:
 | Privileges | Runs directly as root; otherwise uses `sudo`; exits if neither is available |
 | Downloader | `curl` or `wget`; the download is verified against `SHA256SUMS` from the release and aborts on mismatch |
 | systemd | Present: creates a dedicated user and a service enabled at boot. Absent: installs the binary only and prints how to start it manually |
-| Already installed? | Then it upgrades: replaces the binary and restarts, keeping your service file and configuration |
+| Already installed? | Then it **updates**: compares the installed binary with the release and does nothing if it is already the latest; otherwise it replaces the binary (the old one is kept as `telemetrylite.prev`), restarts the service, and **rolls back automatically** if the new version does not start. Your service file and settings are kept; on hosts without systemd it tells you to restart your process |
 | Port in use | Exits if the default 8888 is taken and suggests `--port` |
 | Reverse proxy | With `--domain`: nginx → configured automatically (with login rate limiting) and certbot obtains HTTPS; Caddy → prints a snippet only, never edits your Caddyfile; neither → tells you how to install nginx, never installs packages on its own |
 
-Options: `--domain`, `--email` (certbot email), `--version v0.1.0`, `--port N`, `--no-geoip`, `--dry-run`, `--yes`, `--uninstall` (keeps the data directory). To upgrade, re-run the same command. On a fresh install the script prints the admin UI URL and the admin password, **shown only once**.
+Options: `--domain`, `--email` (certbot email), `--version v0.1.0`, `--port N`, `--no-geoip`, `--force` (reinstall even if up to date), `--rewrite-unit` (regenerate the systemd service file), `--lang en|zh`, `--dry-run`, `--yes`, `--uninstall` (keeps the data directory). **To update later, re-run the same command.** On a fresh install the script prints the admin UI URL and the admin password, **shown only once**.
 
 Next steps (issuing keys, connecting apps, backups, troubleshooting): **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 
@@ -125,7 +126,12 @@ LogRecord mapping: `event_name` (or the `event.name` attribute, or the body) →
 ```sh
 cargo test
 TL_LISTEN=127.0.0.1:8899 TL_ADMIN_PASSWORD=pw cargo run
+
+# black-box regression test: starts the binary on a free port with a temporary database
+cargo build --release && python3 scripts/regress.py --spawn target/release/telemetrylite
 ```
+
+CI runs the same regression test before anything is published (see [DESIGN.md](DESIGN.md)).
 
 ## License
 

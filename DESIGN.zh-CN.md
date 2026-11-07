@@ -74,6 +74,7 @@ CREATE INDEX signal_app_type ON signal(app_id, type, ts);
 - 常用维度单独成列,因为图表最常按它们分组;其余参数留在 `payload`,需要时用 SQLite JSON 函数查询。
 - PRAGMA:`journal_mode=WAL`、`synchronous=NORMAL`、`busy_timeout=5000`、`foreign_keys=ON`。
 - 保留期:每小时按各 App 的保留天数分批(每批 1 万行)删除过期数据。
+- **结构版本**:结构版本存放在 `PRAGMA user_version`(1 = 目前所有发布版;版本化之前创建的库是 0,同样接受)。要改表结构,就在 `db.rs` 里提高 `SCHEMA_VERSION` 并在 `MIGRATIONS` 末尾追加一步;启动时按顺序执行尚未应用的步骤,每步一个事务。库的版本**高于**二进制认识的版本时会明确报错并拒绝启动,所以旧版二进制(比如回滚之后)绝不会去动它不认识的结构。
 - 仪表盘查询直接扫带索引的原始表(暂无预聚合,见 §10)。
 
 ## 4. 写入入口
@@ -123,7 +124,7 @@ CREATE INDEX signal_app_type ON signal(app_id, type, ts);
 
 ## 5. Key 与认证
 
-**写入 key(给 SDK)**:`tl_<32 字节随机 base64url>`;创建时只显示一次,库里只存 SHA-256。每个 App 可有多个,随时可吊销,只能写入该 App。鉴权就是查内存映射。
+**写入 key(给 SDK)**:`tl_<32 字节随机 base64url>`;创建时只显示一次,库里只存 SHA-256。每个 App 可有多个(每个都必须有名称,界面默认建议当前时间),随时可吊销,只能写入该 App。鉴权就是查内存映射。
 
 **管理端**:单管理员。密码首次启动时生成并在日志里打印一次,或由 `TL_ADMIN_PASSWORD` 指定(每次启动都生效,忘记密码也用它重置);库里存 argon2 哈希。登录后发 `HttpOnly; SameSite=Strict` cookie(`X-Forwarded-Proto` 为 https 时加 `Secure`),内容是不透明随机 token;会话存内存、有效 30 天、重启后失效。登录失败延迟 0.5 秒,并由 nginx 限速。TLS 由 nginx 终结(§9)。
 
@@ -132,8 +133,9 @@ CREATE INDEX signal_app_type ON signal(app_id, type, ts);
 一个 HTML 文件,原生 JavaScript,内联 SVG 图表,明暗主题跟随系统。
 
 - **登录**、**App 列表**与新建。
+- **平台筛选**:当一个应用里出现多个平台的数据时(`os` 列:`iOS`、`Android` 等——Swift SDK 发 `iOS`/`macOS`/…,Kotlin SDK 发 `Android`,OTLP 取 `os.name`;写入时统一大小写),每个数据页和事件页的工具栏都会出现「平台」下拉。所有统计接口都接受可选的 `platform` 参数(作为 SQL 参数绑定,绝不拼进查询);`/api/apps/{id}/platforms` 列出最近 90 天出现过的平台。选择在浏览器会话内记住。页头的数字始终是整个应用的。iOS + Android 推荐用「一个应用 + 平台筛选」;只有想要完全独立的 key、保留期和仪表盘时才拆成两个应用。
 - **页头**:App 切换下拉,以及最近 90 天正式数据的三个关键数字:用户、最常用 SDK、错误数。
-- **概览**:时间范围(24 小时 / 7 / 30 / 90 天)、正式/测试数据(横幅提示另一种数据有多少事件被隐藏,可一键切换)、指标卡(最近 1 小时用户、活跃用户、事件、会话)、活跃用户折线图与事件数柱状图、**按周留存队列**(最近 8 周,周一起算)、**App 版本随时间变化**(用户占比,前 8 个版本)、带用户数的热门事件,以及按 App 版本、系统版本、设备型号、语言、国家(界面上按界面语言显示国家名,用浏览器自带的 `Intl.DisplayNames`)、城市的分布。图表有网格线和悬停提示;缺失的时间桶补零,按浏览器本地时区分桶。
+- **概览**:时间范围(24 小时 / 7 / 30 / 90 天)、正式/测试数据(横幅提示另一种数据有多少事件被隐藏,可一键切换)、指标卡(最近 1 小时用户、活跃用户、事件、会话)、活跃用户折线图与事件数柱状图、**按周留存队列**(最近 8 周,周一起算)、**App 版本随时间变化**(用户占比,前 8 个版本)、带用户数的热门事件,以及按 App 版本、系统版本、设备型号、语言、国家(界面上按界面语言显示国家名,用浏览器自带的 `Intl.DisplayNames`)、城市的分布。图表有网格线和类似 TelemetryDeck 的悬浮卡片(粗体日期,每个系列一行:彩色圆点、名称、加粗数值;堆叠图显示各系列占比(保留两位小数),并**聚焦鼠标所在位置的系列**:它在每一列里都保持原色,其他系列淡化,对应的图例项和卡片行被强调;被悬停的列会高亮);留存热力图有自己的悬浮卡片(保留两位小数的留存率及第几周、该队列首次出现的那一周、具体人数);缺失的时间桶补零,按浏览器本地时区分桶。
 - **用户**:每日新用户与新/回访用户对比。用户的第一条事件出现在已存储数据里的那一天算作新用户(所以过期清理之后,早已不活跃的用户可能再次被算作新用户)。
 - **事件类型**:所有事件类型及其用户数、事件数、最近一次时间;点击名称跳到按该事件过滤的事件页。
 - **错误**:趋势,以及按错误 id 和类别汇总的表格,数据来自 SDK 预设的 `TelemetryDeck.Error.occurred` 事件。
@@ -152,7 +154,7 @@ src/admin.rs     /api/*:会话、App、key,以及统计 / 用户 / 留存 / 版�
 src/geo.rs       mmdb 加载(热替换)、下载与更新
 src/i18n.rs      日志语言(英文 / 中文)
 web/index.html   整个管理界面
-scripts/         install.sh(服务器安装)、deploy.sh(从源码部署)、release.sh(本机交叉编译)
+scripts/         install.sh(服务器安装)、deploy.sh(从源码部署)、release.sh(本机交叉编译)、regress.py(黑盒回归测试)
 .github/workflows/ci.yml   每次推送跑测试;v* 标签触发发布构建
 ```
 
@@ -166,7 +168,8 @@ scripts/         install.sh(服务器安装)、deploy.sh(从源码部署)、rele
 
 - 前面放 nginx:终结 HTTPS、限制请求体大小、给 `/api/login` 限速,并用 `X-Forwarded-For` 传真实客户端 IP(覆盖而非追加)。服务只监听 `127.0.0.1`。
 - **`scripts/install.sh`**(从 GitHub Release 获取,`curl | sh` 运行):探测系统、CPU(x86_64 / aarch64)、权限、下载工具、systemd、端口占用和反向代理,打印部署计划,用 `SHA256SUMS` 校验二进制,然后安装、升级或卸载。带 `--domain` 时写入 nginx 配置并申请 Let's Encrypt 证书。输出为双语(默认英文,系统语言为中文或 `--lang zh` 时为中文)。`--dry-run` 不做任何修改。
-- **CI**:推送 `v*` 标签后跑测试,用 `cargo-zigbuild` 交叉编译 x86_64 与 aarch64 的 musl 二进制,连同 `SHA256SUMS` 和 `install.sh`(已写入仓库名)一起发布。
+- **更新**:`install.sh` 是幂等的。只要存在二进制或 service 文件就按更新处理:把已安装二进制的 SHA-256 与发布版 `SHA256SUMS` 里的比较(相同就什么都不做,`--force` 可覆盖),把旧二进制备份为 `telemetrylite.prev`,重启,等待服务响应,**不响应就回滚**到 `.prev`。已有设置(端口、GeoIP、语言)从 service 文件里读回;与安装脚本当前会生成的内容不同的 service 文件会被保留并提示(`--rewrite-unit` 可重新生成)。没有 systemd 时只替换二进制。
+- **CI**:每次推送先跑单元测试,再跑 `regress` 任务(shellcheck、`install.sh --dry-run`、release 构建、`scripts/regress.py --spawn`——它启动真实的二进制,检查写入、统计、隐私(包括原始 IP 不会落库)、key 与管理 API)。推送 `v*` 标签时还会用 `cargo-zigbuild` 交叉编译 x86_64 与 aarch64 的 musl 二进制,**对即将发布的 x86_64 产物再跑一遍回归测试**,通过后才连同 `SHA256SUMS` 和 `install.sh`(已写入仓库名)一起发布。
 - **从源码部署**:`scripts/deploy.sh user@host [域名]` 在本机交叉编译,并在远端运行 `install.sh`。
 
 ## 10. 暂未实现 / 有意跳过

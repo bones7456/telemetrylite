@@ -90,6 +90,7 @@ pub fn router(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/apps/{id}/keys", get(keys_list).post(key_create))
         .route("/api/keys/{id}", delete(key_revoke))
         .route("/api/apps/{id}/summary", get(summary))
+        .route("/api/apps/{id}/platforms", get(platforms))
         .route("/api/apps/{id}/stats", get(stats))
         .route("/api/apps/{id}/event-types", get(event_types))
         .route("/api/apps/{id}/users", get(users))
@@ -210,9 +211,10 @@ struct KeyBody {
 }
 
 async fn key_create(State(st): S, Path(app_id): Path<String>, Json(b): Json<KeyBody>) -> R {
+    // The name is required, so every key can be told apart in the list.
+    let label = b.label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty() && l.chars().count() <= 100).ok_or(E(StatusCode::BAD_REQUEST))?;
     let key = format!("tl_{}", URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()));
     let (id, hash, prefix) = (uuid::Uuid::new_v4().to_string(), sha256_hex(&key), key[..10].to_string());
-    let label = b.label.unwrap_or_default();
     with_db(&st, move |c| c.execute(
         "INSERT INTO api_key(id,app_id,label,prefix,key_hash,created_at) VALUES(?,?,?,?,?,?)",
         rusqlite::params![id, app_id, label, prefix, hash, now_ms()])).await?;
@@ -249,6 +251,12 @@ struct Win {
     test: i64,
     fmt: &'static str,
     tz_sec: i64,
+    /// Optional platform filter (the `os` column, e.g. "iOS" / "Android"); bound as a parameter, never spliced into SQL.
+    os: Option<String>,
+}
+
+fn platform(p: &HashMap<String, String>) -> Option<String> {
+    p.get("platform").map(|s| s.trim()).filter(|s| !s.is_empty() && s.chars().count() <= 50).map(String::from)
 }
 
 fn win(p: &HashMap<String, String>) -> Win {
@@ -258,27 +266,29 @@ fn win(p: &HashMap<String, String>) -> Win {
         test: i64::from(p.get("test").is_some_and(|t| t == "1")),
         fmt: if days <= 1 { "%Y-%m-%d %H:00" } else { "%Y-%m-%d" },
         tz_sec: p.get("tz").and_then(|t| t.parse::<i64>().ok()).unwrap_or(0).clamp(-840, 840) * 60,
+        os: platform(p),
     }
 }
 
 async fn stats(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
-    let Win { since, test, fmt, tz_sec } = win(&p);
+    let Win { since, test, fmt, tz_sec, os } = win(&p);
     let (hour_ago, other) = (now_ms() - 3_600_000, 1 - test);
     let out = with_db(&st, move |c| {
-        let w = "FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3";
-        let args: &[&dyn ToSql] = &[&id, &since, &test];
-        let totals = q(c, &format!("SELECT COUNT(*) events, COUNT(DISTINCT user_hash) users, COUNT(DISTINCT session_id) sessions {w}"), args)?;
-        let series = q(c, &format!("SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY t ORDER BY t"),
-            &[&id, &since, &test, &fmt, &tz_sec])?;
-        let top = q(c, &format!("SELECT type, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY type ORDER BY events DESC LIMIT 20"), args)?;
+        // `n` is the number of the platform placeholder; every query binds `os` as its last parameter.
+        let w = |n: usize| format!("FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND (?{n} IS NULL OR os = ?{n})");
+        let args: &[&dyn ToSql] = &[&id, &since, &test, &os];
+        let totals = q(c, &format!("SELECT COUNT(*) events, COUNT(DISTINCT user_hash) users, COUNT(DISTINCT session_id) sessions {}", w(4)), args)?;
+        let series = q(c, &format!("SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {} GROUP BY t ORDER BY t", w(6)),
+            &[&id, &since, &test, &fmt, &tz_sec, &os])?;
+        let top = q(c, &format!("SELECT type, COUNT(*) events, COUNT(DISTINCT user_hash) users {} GROUP BY type ORDER BY events DESC LIMIT 20", w(4)), args)?;
         let mut dims = Map::new();
         for (name, expr) in DIMS {
-            let rows = q(c, &format!("SELECT COALESCE(NULLIF({expr},''),'') v, COUNT(DISTINCT user_hash) users, COUNT(*) events {w} GROUP BY v ORDER BY users DESC, events DESC LIMIT 8"), args)?;
+            let rows = q(c, &format!("SELECT COALESCE(NULLIF({expr},''),'') v, COUNT(DISTINCT user_hash) users, COUNT(*) events {} GROUP BY v ORDER BY users DESC, events DESC LIMIT 8", w(4)), args)?;
             dims.insert(name.into(), Value::Array(rows));
         }
         // 最近 1 小时的用户数(接入调试用);另一种数据类型(正式/测试)里有多少事件,用于提示
-        let last_hour = q(c, &format!("SELECT COUNT(DISTINCT user_hash) n {w}"), &[&id, &hour_ago, &test])?;
-        let hidden = q(c, &format!("SELECT COUNT(*) n {w}"), &[&id, &since, &other])?;
+        let last_hour = q(c, &format!("SELECT COUNT(DISTINCT user_hash) n {}", w(4)), &[&id, &hour_ago, &test, &os])?;
+        let hidden = q(c, &format!("SELECT COUNT(*) n {}", w(4)), &[&id, &since, &other, &os])?;
         Ok(json!({ "totals": totals.first(), "series": series, "top": top, "dims": dims,
                    "last_hour_users": last_hour[0]["n"], "other_events": hidden[0]["n"] }))
     }).await?;
@@ -298,24 +308,33 @@ async fn summary(State(st): S, Path(id): Path<String>) -> R {
     Ok(Json(out))
 }
 
+/// Platforms (the `os` column) seen in the last 90 days, for the platform filter.
+async fn platforms(State(st): S, Path(id): Path<String>) -> R {
+    let since = now_ms() - 90 * 86_400_000;
+    let rows = with_db(&st, move |c| q(c,
+        "SELECT os, COUNT(DISTINCT user_hash) users, COUNT(*) events FROM signal
+         WHERE app_id=?1 AND ts>=?2 AND os IS NOT NULL AND os <> '' GROUP BY os ORDER BY users DESC LIMIT 12", &[&id, &since])).await?;
+    Ok(Json(Value::Array(rows)))
+}
+
 async fn event_types(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
-    let Win { since, test, .. } = win(&p);
+    let Win { since, test, os, .. } = win(&p);
     let rows = with_db(&st, move |c| q(c,
         "SELECT type, COUNT(DISTINCT user_hash) users, COUNT(*) events, MAX(ts) last_ts
-         FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 GROUP BY type ORDER BY events DESC LIMIT 500",
-        &[&id, &since, &test])).await?;
+         FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND (?4 IS NULL OR os = ?4) GROUP BY type ORDER BY events DESC LIMIT 500",
+        &[&id, &since, &test, &os])).await?;
     Ok(Json(Value::Array(rows)))
 }
 
 /// 新用户(按用户在已存储数据里的首次出现时间)与活跃用户。
 async fn users(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
-    let Win { since, test, fmt, tz_sec } = win(&p);
+    let Win { since, test, fmt, tz_sec, os } = win(&p);
     let out = with_db(&st, move |c| {
         let new = q(c, "SELECT strftime(?4, f/1000 + ?5, 'unixepoch') t, COUNT(*) users FROM
-                (SELECT MIN(ts) f FROM signal WHERE app_id=?1 AND is_test=?3 AND user_hash IS NOT NULL GROUP BY user_hash)
-              WHERE f >= ?2 GROUP BY t ORDER BY t", &[&id, &since, &test, &fmt, &tz_sec])?;
+                (SELECT MIN(ts) f FROM signal WHERE app_id=?1 AND is_test=?3 AND user_hash IS NOT NULL AND (?6 IS NULL OR os = ?6) GROUP BY user_hash)
+              WHERE f >= ?2 GROUP BY t ORDER BY t", &[&id, &since, &test, &fmt, &tz_sec, &os])?;
         let active = q(c, "SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COUNT(DISTINCT user_hash) users
-              FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 GROUP BY t ORDER BY t", &[&id, &since, &test, &fmt, &tz_sec])?;
+              FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND (?6 IS NULL OR os = ?6) GROUP BY t ORDER BY t", &[&id, &since, &test, &fmt, &tz_sec, &os])?;
         Ok(json!({ "new": new, "active": active }))
     }).await?;
     Ok(Json(out))
@@ -325,44 +344,44 @@ async fn users(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<Str
 async fn retention(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
     const WEEK: i64 = 7 * 86_400_000;
     const MON: i64 = 3 * 86_400_000; // unix 纪元是周四,偏移 3 天后按周一分周
-    let Win { test, tz_sec, .. } = win(&p);
+    let Win { test, tz_sec, os, .. } = win(&p);
     let tz = tz_sec * 1000;
     let cur = (now_ms() + tz + MON) / WEEK;
     let first_cohort = cur - 7;
     let active_since = now_ms() - 9 * WEEK;
     let rows = with_db(&st, move |c| q(c,
-        "WITH f AS (SELECT user_hash, MIN(ts) first_ts FROM signal WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL GROUP BY user_hash),
+        "WITH f AS (SELECT user_hash, MIN(ts) first_ts FROM signal WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL AND (?8 IS NULL OR os = ?8) GROUP BY user_hash),
               a AS (SELECT DISTINCT user_hash, (ts + ?3 + ?6) / ?7 AS wk FROM signal
-                    WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL AND ts >= ?4),
+                    WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL AND ts >= ?4 AND (?8 IS NULL OR os = ?8)),
               j AS (SELECT (f.first_ts + ?3 + ?6) / ?7 AS cohort, a.wk AS wk FROM f JOIN a ON a.user_hash = f.user_hash)
          SELECT cohort, wk - cohort AS n, COUNT(*) users FROM j
          WHERE cohort >= ?5 AND wk >= cohort GROUP BY cohort, n ORDER BY cohort, n",
-        &[&id, &test, &tz, &active_since, &first_cohort, &MON, &WEEK])).await?;
+        &[&id, &test, &tz, &active_since, &first_cohort, &MON, &WEEK, &os])).await?;
     Ok(Json(json!({ "rows": rows, "week_ms": WEEK, "mon_ms": MON })))
 }
 
 /// 各 App 版本的用户数随时间变化(客户端取前 8 个版本画堆叠图)。
 async fn versions(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
-    let Win { since, test, fmt, tz_sec } = win(&p);
+    let Win { since, test, fmt, tz_sec, os } = win(&p);
     let rows = with_db(&st, move |c| q(c,
         "SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COALESCE(NULLIF(app_version,''),'') v, COUNT(DISTINCT user_hash) users
-         FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 GROUP BY t, v ORDER BY t",
-        &[&id, &since, &test, &fmt, &tz_sec])).await?;
+         FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND (?6 IS NULL OR os = ?6) GROUP BY t, v ORDER BY t",
+        &[&id, &since, &test, &fmt, &tz_sec, &os])).await?;
     Ok(Json(Value::Array(rows)))
 }
 
 /// SDK 预设错误事件(`TelemetryDeck.Error.occurred`):趋势、按错误 id 汇总。
 async fn errors(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
-    let Win { since, test, fmt, tz_sec } = win(&p);
+    let Win { since, test, fmt, tz_sec, os } = win(&p);
     let out = with_db(&st, move |c| {
-        let w = "FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND type=?4";
-        let series = q(c, &format!("SELECT strftime(?5, ts/1000 + ?6, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY t ORDER BY t"),
-            &[&id, &since, &test, &ERR_TYPE, &fmt, &tz_sec])?;
+        let w = |n: usize| format!("FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND type=?4 AND (?{n} IS NULL OR os = ?{n})");
+        let series = q(c, &format!("SELECT strftime(?5, ts/1000 + ?6, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {} GROUP BY t ORDER BY t", w(7)),
+            &[&id, &since, &test, &ERR_TYPE, &fmt, &tz_sec, &os])?;
         let top = q(c, &format!("SELECT json_extract(payload,'$.\"TelemetryDeck.Error.id\"') err_id,
                 json_extract(payload,'$.\"TelemetryDeck.Error.category\"') err_category,
                 MAX(json_extract(payload,'$.\"TelemetryDeck.Error.message\"')) err_message,
                 COUNT(*) events, COUNT(DISTINCT user_hash) users, MAX(ts) last_ts
-             {w} GROUP BY err_id, err_category ORDER BY events DESC LIMIT 100"), &[&id, &since, &test, &ERR_TYPE])?;
+             {} GROUP BY err_id, err_category ORDER BY events DESC LIMIT 100", w(5)), &[&id, &since, &test, &ERR_TYPE, &os])?;
         Ok(json!({ "series": series, "top": top }))
     }).await?;
     Ok(Json(out))
@@ -372,10 +391,11 @@ async fn events(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<St
     let kind = p.get("type").filter(|t| !t.is_empty()).cloned();
     let before = p.get("before").and_then(|b| b.parse::<i64>().ok());
     let limit: i64 = p.get("limit").and_then(|l| l.parse().ok()).unwrap_or(100).clamp(1, 500);
+    let os = platform(&p);
     let rows = with_db(&st, move |c| q(c,
         "SELECT id, ts, type, user_hash, session_id, float_value, is_test, app_version, os, os_version,
                 device_model, locale, country, city, payload
-         FROM signal WHERE app_id=?1 AND (?2 IS NULL OR type=?2) AND (?3 IS NULL OR id<?3)
-         ORDER BY id DESC LIMIT ?4", &[&id, &kind, &before, &limit])).await?;
+         FROM signal WHERE app_id=?1 AND (?2 IS NULL OR type=?2) AND (?3 IS NULL OR id<?3) AND (?5 IS NULL OR os = ?5)
+         ORDER BY id DESC LIMIT ?4", &[&id, &kind, &before, &limit, &os])).await?;
     Ok(Json(Value::Array(rows)))
 }
