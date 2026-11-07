@@ -32,9 +32,9 @@ impl Geo {
         match unsafe { Reader::open_mmap(p) } {
             Ok(r) => {
                 *self.reader.write().unwrap() = Some(Arc::new(r));
-                tracing::info!("GeoIP 库已加载: {}", p.display());
+                crate::i18n::log_tr!(info, "GeoIP database loaded: {}", "GeoIP 库已加载: {}", p.display());
             }
-            Err(e) => tracing::warn!("GeoIP 库无法打开 {}: {e}", p.display()),
+            Err(e) => crate::i18n::log_tr!(warn, "cannot open the GeoIP database {}: {e}", "GeoIP 库无法打开 {}: {e}", p.display()),
         }
     }
 
@@ -63,8 +63,8 @@ pub async fn auto_update(geo: Arc<Geo>) {
             let path = geo.path.clone().unwrap();
             match tokio::task::spawn_blocking(move || download(&path)).await {
                 Ok(Ok(())) => geo.reload(),
-                Ok(Err(e)) => tracing::warn!("GeoIP 下载失败: {e}"),
-                Err(e) => tracing::warn!("GeoIP 下载任务异常: {e}"),
+                Ok(Err(e)) => crate::i18n::log_tr!(warn, "GeoIP download failed: {e}", "GeoIP 下载失败: {e}"),
+                Err(e) => crate::i18n::log_tr!(warn, "GeoIP download task error: {e}", "GeoIP 下载任务异常: {e}"),
             }
         }
         tokio::time::sleep(Duration::from_secs(86400)).await;
@@ -81,7 +81,7 @@ fn download(path: &Path) -> io::Result<()> {
         let url = format!("https://download.db-ip.com/free/dbip-city-lite-{y}-{m:02}.mmdb.gz");
         match fetch_gz(&url, path) {
             Ok(()) => {
-                tracing::info!("GeoIP 库已更新: {url}");
+                crate::i18n::log_tr!(info, "GeoIP database updated: {url}", "GeoIP 库已更新: {url}");
                 return Ok(());
             }
             Err(e) => last_err = e,

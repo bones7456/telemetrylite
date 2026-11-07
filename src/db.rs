@@ -89,7 +89,7 @@ pub fn spawn_writer(path: String) -> (mpsc::Sender<Vec<Signal>>, JoinHandle<()>)
                 }
             }
             if let Err(e) = insert(&mut conn, &batch) {
-                tracing::error!("写入失败,丢弃 {} 条: {e}", batch.len());
+                crate::i18n::log_tr!(error, "write failed, dropped {} events: {e}", "写入失败,丢弃 {} 条: {e}", batch.len());
             }
         }
     });

@@ -6,8 +6,8 @@
 
 - 写入:`/k/<key>/v2/`(TelemetryDeck)、`/v1/logs`(OTLP,protobuf/JSON,支持 gzip)
 - 不存 IP;可选 GeoIP(DB-IP City Lite)解析国家/地区/城市
-- 管理界面:概览(用户/事件趋势、热门事件、版本/系统/机型/语言/国家/城市分布)、事件浏览器、API key 管理
-- 设计说明见 [DESIGN.md](DESIGN.md)
+- 管理界面:概览(活跃用户与事件、按周留存队列、App 版本随时间变化、热门事件、版本/系统/机型/语言/国家/城市分布)、新用户与回访用户、事件类型、错误、事件浏览器、API key 管理;测试事件被隐藏时有提示;支持手动刷新(默认)和可选的自动刷新,刷新只重新请求数据
+- 设计说明见 [DESIGN.zh-CN.md](DESIGN.zh-CN.md)
 
 ## 安装
 

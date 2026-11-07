@@ -13,13 +13,14 @@ a{color:var(--accent);text-decoration:none;cursor:pointer}
 header{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--line)}
 header b{font-size:16px}header .sp{flex:1}
 header select{padding:2px 6px;font-size:13px}
+.row .sp{flex:1}
 main{max-width:1100px;margin:0 auto;padding:24px 16px}
 footer{text-align:center;color:var(--mute);font-size:12px;padding:24px}
 h2{margin:0 0 16px;font-size:20px}h3{margin:0 0 12px;font-size:14px;color:var(--mute);font-weight:600}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
 .grid .card{margin:0}
-.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
 .tile b{display:block;font-size:28px}.tile span{color:var(--mute)}
 .tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}
 .tabs a{padding:8px 14px;color:var(--mute);border-bottom:2px solid transparent}
@@ -37,7 +38,12 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:
 .mute{color:var(--mute)}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 svg{width:100%;height:auto;display:block}
 summary{cursor:pointer}
-@media(max-width:700px){.tiles,.two{grid-template-columns:1fr}header{padding:12px 16px}}
+.summary{display:flex;gap:32px;flex-wrap:wrap;margin:0 0 16px}.summary div{display:flex;flex-direction:column}.summary b{font-size:18px}
+.banner{background:rgba(242,169,59,.13);border:1px solid rgba(242,169,59,.55);border-radius:8px;padding:8px 12px;margin-bottom:16px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:12px;color:var(--mute)}.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+table.heat{font-size:12px}.heat th,.heat td{padding:3px 6px;text-align:center;white-space:nowrap}.heat th:first-child,.heat td:first-child{text-align:left}.heat td.cell{border:2px solid var(--card)}
+th.num,td.num{text-align:right}
+@media(max-width:700px){.tiles,.two{grid-template-columns:1fr}.summary{gap:16px}header{padding:12px 16px}}
 </style>
 </head>
 <body>
@@ -48,12 +54,23 @@ const I18N = {
   en: {
     logout: 'Log out', adminPassword: 'Admin password', login: 'Log in', wrongPassword: 'Wrong password',
     newAppName: 'New app name', create: 'Create', noApps: 'No apps yet. Create one first.', events24h: ' events / 24h',
-    tabOverview: 'Overview', tabEvents: 'Events', tabSettings: 'Settings',
+    tabOverview: 'Overview', tabUsers: 'Users', tabEvents: 'Events', tabTypes: 'Event types', tabErrors: 'Errors', tabSettings: 'Settings',
     range1: '24 hours', range7: '7 days', range30: '30 days', range90: '90 days', live: 'Live data', testData: 'Test data',
-    activeUsers: 'Active users', events: 'Events', sessions: 'Sessions', topEvents: 'Top events', noData: 'No data',
-    usersSuffix: ' · users',
+    activeUsers: 'Active users', events: 'Events', sessions: 'Sessions', lastHour: 'Users in the last hour',
+    topEvents: 'Top events', noData: 'No data', unknown: '(unknown)', usersSuffix: ' · users', nUsers: n => `${n} users`,
     dim_app_version: 'App version', dim_os_version: 'OS version', dim_device_model: 'Device model',
     dim_locale: 'Locale', dim_country: 'Country', dim_city: 'City',
+    sumUsers: 'Users', sumSdk: 'Most used SDK', sumErrors: 'Errors', sumHint: 'last 90 days, live data',
+    hiddenTest: n => `${n} test-mode events are hidden because you are viewing live data.`,
+    hiddenLive: n => `${n} live events are hidden because you are viewing test data.`,
+    switchTest: 'Switch to test data', switchLive: 'Switch to live data',
+    retentionTitle: 'User retention (weekly cohorts)', cohort: 'Cohort', weekN: n => `W${n}`,
+    versionsTitle: 'App versions over time (share of users)', other: 'other',
+    newUsers: 'New users', returning: 'Returning users', newVsReturning: 'New vs returning users',
+    newNote: 'A user counts as new on the day their first event appears in the stored data.',
+    colType: 'Event', colUsers: 'Users', colEvents: 'Events', colLast: 'Last seen',
+    errorsTitle: 'Errors over time', errId: 'Error', errCategory: 'Category', errMessage: 'Message', noErrors: 'No errors in this range.',
+    errorsNote: 'Counts the SDK\'s preset TelemetryDeck.Error.occurred events.',
     loadMore: 'Load more', filterPh: 'Filter by event name (exact match)', filterHint: 'Press Enter; includes test data',
     colTime: 'Time', colEvent: 'Event', colEnv: 'Environment', colParams: 'Parameters',
     sysParams: n => `System parameters (${n})`,
@@ -65,16 +82,29 @@ const I18N = {
     danger: 'Danger zone', deleteApp: 'Delete app and all its data',
     deleteConfirm: name => `Delete app “${name}” and all of its data? This cannot be undone.`,
     error: 'Something went wrong: ',
+    refresh: 'Refresh', autoRefresh: 'Auto refresh', autoOff: 'Off (manual)', auto10: 'Every 10 s', auto30: 'Every 30 s',
+    auto60: 'Every 1 min', auto300: 'Every 5 min', updatedAt: ts => `Updated ${ts}`, refreshFailed: 'Refresh failed',
   },
   zh: {
     logout: '退出', adminPassword: '管理员密码', login: '登录', wrongPassword: '密码错误',
     newAppName: '新 App 名称', create: '创建', noApps: '还没有 App,先创建一个。', events24h: ' 事件 / 24h',
-    tabOverview: '概览', tabEvents: '事件', tabSettings: '设置',
+    tabOverview: '概览', tabUsers: '用户', tabEvents: '事件', tabTypes: '事件类型', tabErrors: '错误', tabSettings: '设置',
     range1: '24 小时', range7: '7 天', range30: '30 天', range90: '90 天', live: '正式数据', testData: '测试数据',
-    activeUsers: '活跃用户', events: '事件', sessions: '会话', topEvents: '热门事件', noData: '暂无数据',
-    usersSuffix: ' · 用户数',
+    activeUsers: '活跃用户', events: '事件', sessions: '会话', lastHour: '最近 1 小时用户数',
+    topEvents: '热门事件', noData: '暂无数据', unknown: '(未知)', usersSuffix: ' · 用户数', nUsers: n => `${n} 用户`,
     dim_app_version: 'App 版本', dim_os_version: '系统版本', dim_device_model: '设备型号',
     dim_locale: '语言/地区', dim_country: '国家', dim_city: '城市',
+    sumUsers: '用户', sumSdk: '最常用 SDK', sumErrors: '错误', sumHint: '最近 90 天,正式数据',
+    hiddenTest: n => `当前查看的是正式数据,另有 ${n} 条测试事件未显示。`,
+    hiddenLive: n => `当前查看的是测试数据,另有 ${n} 条正式事件未显示。`,
+    switchTest: '切换到测试数据', switchLive: '切换到正式数据',
+    retentionTitle: '用户留存(按周的队列)', cohort: '队列', weekN: n => `第 ${n} 周`,
+    versionsTitle: 'App 版本随时间变化(用户占比)', other: '其他',
+    newUsers: '新用户', returning: '回访用户', newVsReturning: '新用户 vs 回访用户',
+    newNote: '用户的第一条事件出现在已存储的数据里的那一天,算作新用户。',
+    colType: '事件', colUsers: '用户', colEvents: '事件数', colLast: '最近一次',
+    errorsTitle: '错误趋势', errId: '错误', errCategory: '类别', errMessage: '信息', noErrors: '这个时间范围内没有错误。',
+    errorsNote: '统计 SDK 预设的 TelemetryDeck.Error.occurred 事件。',
     loadMore: '加载更多', filterPh: '按事件名过滤(精确匹配)', filterHint: '回车确认;含测试数据',
     colTime: '时间', colEvent: '事件', colEnv: '环境', colParams: '参数',
     sysParams: n => `系统参数 (${n})`,
@@ -86,6 +116,8 @@ const I18N = {
     danger: '危险操作', deleteApp: '删除 App 及全部数据',
     deleteConfirm: name => `删除 App「${name}」及其全部数据?不可恢复。`,
     error: '出错了:',
+    refresh: '刷新', autoRefresh: '自动刷新', autoOff: '关闭(手动)', auto10: '每 10 秒', auto30: '每 30 秒',
+    auto60: '每 1 分钟', auto300: '每 5 分钟', updatedAt: ts => `更新于 ${ts}`, refreshFailed: '刷新失败',
   },
 };
 // 默认英语;用户选择的语言记在浏览器本地(存储不可用时退回英语)
@@ -120,45 +152,113 @@ const api = async (method, path, body) => {
   return r.json();
 };
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : String(n);
-const when = ts => new Date(ts).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US');
+const loc = () => lang === 'zh' ? 'zh-CN' : 'en-US';
+const when = ts => new Date(ts).toLocaleString(loc());
+// Values that come from clients (versions, labels …) must be escaped before they go into SVG/HTML strings.
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---- query state shared by the data pages ----
+const getQ = () => { try { return JSON.parse(sessionStorage.getItem('q')) || { days: 7, test: 0 }; } catch { return { days: 7, test: 0 }; } };
+const setQ = (k, v) => { const q = getQ(); q[k] = v; try { sessionStorage.setItem('q', JSON.stringify(q)); } catch {} };
+const tzMin = () => -new Date().getTimezoneOffset();
+const qs = q => `days=${q.days}&test=${q.test}&tz=${tzMin()}`;
 
 // ---- charts ----
-// Fill missing time buckets in the browser's local time zone; otherwise one day of data renders as a lone dot / a full-width bar.
+// Time buckets in the browser's local time zone, so a range with little data still spans the whole axis.
 const pad2 = n => String(n).padStart(2, '0');
-function fillSeries(series, days) {
-  const hourly = days <= 1, step = (hourly ? 3600 : 86400) * 1000, tz = -new Date().getTimezoneOffset() * 60000;
-  const key = t => { const d = new Date(t); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}` + (hourly ? ` ${pad2(d.getUTCHours())}:00` : ''); };
-  const by = Object.fromEntries(series.map(s => [s.t, s]));
+function bucketKeys(days) {
+  const hourly = days <= 1, step = (hourly ? 3600 : 86400) * 1000, tz = tzMin() * 60000;
+  const key = x => { const d = new Date(x); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}` + (hourly ? ` ${pad2(d.getUTCHours())}:00` : ''); };
   const now = Date.now() + tz, out = [];
-  for (let t = Math.floor((now - days * 86400000) / step) * step; t <= now; t += step) {
-    const k = key(t); out.push(by[k] || { t: k, events: 0, users: 0 });
-  }
+  for (let x = Math.floor((now - days * 86400000) / step) * step; x <= now; x += step) out.push(key(x));
   return out;
 }
+const fillSeries = (series, days) => { const by = Object.fromEntries(series.map(s => [s.t, s])); return bucketKeys(days).map(k => by[k] || { t: k, events: 0, users: 0 }); };
+
+const PALETTE = ['#4c78ff', '#35b6a3', '#f2a93b', '#e4572e', '#9b6bdf', '#5dc0e8', '#8fbf3f', '#e86fa3'], OTHER = '#8a94a6';
+const G = { W: 600, H: 160, L: 32, R: 6, T: 8, B: 20 };
+// Axis: grid lines with value labels, first/last bucket label underneath.
+function axis(ticks, y, labels, fmtTick = fmt) {
+  const { W, H, L, R } = G;
+  return ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${y(v) + 3}" text-anchor="end" font-size="10" fill="var(--mute)">${fmtTick(v)}</text>`).join('') +
+    (labels.length ? `<text x="${L}" y="${H - 5}" font-size="10" fill="var(--mute)">${esc(labels[0])}</text><text x="${W - R}" y="${H - 5}" text-anchor="end" font-size="10" fill="var(--mute)">${esc(labels.at(-1))}</text>` : '');
+}
+const ticksFor = max => max <= 2 ? [0, max] : [0, Math.round(max / 2), max];
+const svgBox = inner => { const d = h('div'); d.innerHTML = `<svg viewBox="0 0 ${G.W} ${G.H}">${inner}</svg>`; return d; };
+
+// Line or bar chart of one metric; hover any bucket for its exact value.
 function chart(series, key, bars) {
-  const W = 600, H = 150, P = 4, max = Math.max(1, ...series.map(s => s[key]));
-  const x = i => P + (series.length < 2 ? W / 2 : i * (W - 2 * P) / (series.length - 1));
-  const y = v => H - 18 - (v / max) * (H - 30);
+  const { W, L, R, T, B, H } = G, iw = W - L - R, ih = H - T - B, n = Math.max(series.length, 1), step = iw / n;
+  const max = Math.max(1, ...series.map(s => s[key])), y = v => T + ih - v / max * ih, cx = i => L + step * i + step / 2;
   let body;
   if (bars) {
-    const step = (W - 2 * P) / series.length, w = Math.min(28, Math.max(2, step - 2));
-    body = series.map((s, i) => `<rect x="${P + i * step + (step - w) / 2}" y="${y(s[key])}" width="${w}" height="${H - 18 - y(s[key])}" fill="var(--accent)" opacity=".8"/>`).join('');
+    const w = Math.min(28, Math.max(2, step - 2));
+    body = series.map((s, i) => `<rect x="${cx(i) - w / 2}" y="${y(s[key])}" width="${w}" height="${T + ih - y(s[key])}" fill="var(--accent)" opacity=".85"/>`).join('');
   } else {
-    const pts = series.map((s, i) => `${x(i)},${y(s[key])}`).join(' ');
-    body = `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>` +
-      series.map((s, i) => `<circle cx="${x(i)}" cy="${y(s[key])}" r="2.5" fill="var(--accent)"/>`).join('');
+    body = `<polyline points="${series.map((s, i) => `${cx(i)},${y(s[key])}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2"/>` +
+      series.map((s, i) => `<circle cx="${cx(i)}" cy="${y(s[key])}" r="2.5" fill="var(--accent)"/>`).join('');
   }
-  const lab = (t, a, xx) => `<text x="${xx}" y="${H - 3}" text-anchor="${a}" font-size="11" fill="var(--mute)">${t}</text>`;
-  const svg = `<svg viewBox="0 0 ${W} ${H}"><text x="${P}" y="11" font-size="11" fill="var(--mute)">${max}</text>
-    <line x1="0" x2="${W}" y1="${H - 18}" y2="${H - 18}" stroke="var(--line)"/>${body}
-    ${series.length ? lab(series[0].t, 'start', P) + lab(series.at(-1).t, 'end', W - P) : ''}</svg>`;
-  const d = h('div'); d.innerHTML = svg; return d;
+  const hit = series.map((s, i) => `<rect x="${L + step * i}" y="${T}" width="${step}" height="${ih}" fill="transparent"><title>${esc(s.t)}: ${s[key]}</title></rect>`).join('');
+  return svgBox(axis(ticksFor(max), y, series.map(s => s.t)) + body + hit);
 }
-const bars = (rows, key) => {
+
+// Stacked bars: buckets = [{t, v: {key: n}}], defs = [{k, label, color}]; percent normalizes every bar to 100%.
+function stacked(buckets, defs, percent) {
+  const { W, L, R, T, B, H } = G, iw = W - L - R, ih = H - T - B, n = Math.max(buckets.length, 1), step = iw / n, w = Math.min(28, Math.max(2, step - 2));
+  const tot = b => defs.reduce((a, d) => a + (b.v[d.k] || 0), 0);
+  const max = percent ? 100 : Math.max(1, ...buckets.map(tot)), y = v => T + ih - v / max * ih;
+  let body = '', hit = '';
+  buckets.forEach((b, i) => {
+    const total = tot(b); let acc = 0; const x = L + step * i + (step - w) / 2;
+    for (const d of defs) {
+      const raw = b.v[d.k] || 0, v = percent ? (total ? raw / total * 100 : 0) : raw;
+      if (v > 0) body += `<rect x="${x}" y="${y(acc + v)}" width="${w}" height="${y(acc) - y(acc + v)}" fill="${d.color}"/>`;
+      acc += v;
+    }
+    const tip = defs.filter(d => b.v[d.k]).map(d => `${d.label}: ${b.v[d.k]}${percent && total ? ` (${Math.round(b.v[d.k] / total * 100)}%)` : ''}`).join('\n');
+    hit += `<rect x="${L + step * i}" y="${T}" width="${step}" height="${ih}" fill="transparent"><title>${esc(b.t + (tip ? '\n' + tip : ''))}</title></rect>`;
+  });
+  const box = svgBox(axis(percent ? [0, 50, 100] : ticksFor(max), y, buckets.map(b => b.t), percent ? v => v + '%' : fmt) + body + hit);
+  box.append(h('div', { class: 'legend' }, defs.map(d => h('span', {}, h('i', { style: `background:${d.color}` }), d.label))));
+  return box;
+}
+
+const bars = (rows, key, sub) => {
   const max = Math.max(1, ...rows.map(r => r[key]));
   return rows.length ? rows.map(r => h('div', { class: 'bar' },
-    h('i', { style: `width:${r[key] / max * 100}%` }), h('span', {}, r.v ?? r.type), h('span', {}, fmt(r[key])))) : h('div', { class: 'mute' }, t('noData'));
+    h('i', { style: `width:${r[key] / max * 100}%` }), h('span', {}, r.v === '' ? t('unknown') : r.v ?? r.type),
+    h('span', {}, fmt(r[key]), sub ? sub(r) : ''))) : h('div', { class: 'mute' }, t('noData'));
 };
+
+// ---- refresh ----
+// Manual refresh (default) and optional auto refresh only re-fetch data and update the current view in place.
+const AUTO = [0, 10, 30, 60, 300];
+let autoSec = 0, timer = null, runCurrent = null;
+try { const v = +localStorage.getItem('autoSec'); if (AUTO.includes(v)) autoSec = v; } catch {}
+function schedule() {
+  clearInterval(timer);
+  if (autoSec > 0 && runCurrent) timer = setInterval(() => { if (!document.hidden) runCurrent(); }, autoSec * 1000);
+}
+const nowLabel = () => new Date().toLocaleTimeString(loc());
+// refresh: async () => void (throws on failure); returns [button, auto select, status] and registers the view for auto refresh.
+function refreshControls(refresh, status) {
+  let busy = false;
+  const btn = h('button', { onclick: () => run() }, t('refresh'));
+  const run = async () => {
+    if (busy) return;
+    busy = true; btn.disabled = true;
+    try { await refresh(); status.textContent = t('updatedAt', nowLabel()); }
+    catch (e) { if (e.message !== 'unauth') status.textContent = t('refreshFailed'); }
+    finally { busy = false; btn.disabled = false; }
+  };
+  const sel = h('select', { title: t('autoRefresh'), onchange: e => {
+    autoSec = +e.target.value;
+    try { localStorage.setItem('autoSec', String(autoSec)); } catch {}
+    schedule();
+  } }, AUTO.map(v => h('option', { value: v, selected: v === autoSec }, v ? t('auto' + v) : t('autoOff'))));
+  runCurrent = run;
+  return [btn, sel, status];
+}
 
 // ---- pages ----
 const shell = (crumbs, ...kids) => h('div', {},
@@ -196,28 +296,117 @@ async function appsView() {
     apps.length ? null : h('div', { class: 'mute' }, t('noApps')));
 }
 
-const appShell = (app, tab, ...kids) => shell(h('span', { class: 'mute' }, '/ ', app.name),
-  h('div', { class: 'tabs' }, [['overview', 'tabOverview'], ['events', 'tabEvents'], ['settings', 'tabSettings']].map(([k, l]) =>
-    h('a', { href: `#/app/${app.id}/${k}`, class: k === tab ? 'on' : '' }, t(l)))), ...kids);
+const TABS = [['overview', 'tabOverview'], ['users', 'tabUsers'], ['events', 'tabEvents'], ['types', 'tabTypes'], ['errors', 'tabErrors'], ['settings', 'tabSettings']];
+// Header: app switcher; below it the three headline numbers; then the tabs.
+const appShell = (app, tab, ...kids) => {
+  const sw = h('select', { 'aria-label': 'App', onchange: e => { location.hash = `#/app/${e.target.value}/${tab}`; } },
+    app.apps.map(a => h('option', { value: a.id, selected: a.id === app.id }, a.name)));
+  const sm = app.summary, stat = (label, v) => h('div', {}, h('span', { class: 'mute' }, label), h('b', {}, v));
+  return shell(h('span', {}, h('span', { class: 'mute' }, ' / '), sw),
+    h('div', { class: 'summary', title: t('sumHint') }, stat(t('sumUsers'), fmt(sm.users)), stat(t('sumSdk'), sm.sdk || '—'), stat(t('sumErrors'), fmt(sm.errors))),
+    h('div', { class: 'tabs' }, TABS.map(([k, l]) => h('a', { href: `#/app/${app.id}/${k}`, class: k === tab ? 'on' : '' }, t(l)))), ...kids);
+};
+
+// Shared layout of the data pages: range + live/test selects, refresh controls, and a content area that is re-filled on every fetch.
+const RANGES = () => [[1, t('range1')], [7, t('range7')], [30, t('range30')], [90, t('range90')]];
+async function liveView(app, tab, build) {
+  const content = h('div'), status = h('span', { class: 'mute' });
+  const update = async () => content.replaceChildren(...await build(getQ()));
+  await update();
+  status.textContent = t('updatedAt', nowLabel());
+  const controls = refreshControls(update, status);
+  const sel = (k, opts) => h('select', { onchange: e => { setQ(k, +e.target.value); controls[0].click(); } },
+    opts.map(([v, l]) => h('option', { value: v, selected: v === getQ()[k] }, l)));
+  return appShell(app, tab, h('div', { class: 'row' }, sel('days', RANGES()), sel('test', [[0, t('live')], [1, t('testData')]]), h('span', { class: 'sp' }), ...controls), content);
+}
+
+const card = (title, ...kids) => h('div', { class: 'card' }, h('h3', {}, title), ...kids);
+
+// Weekly cohorts: share of each cohort that is active in the following weeks.
+function retentionChart(r) {
+  const cells = {}, cohorts = [...new Set(r.rows.map(x => x.cohort))].sort((a, b) => a - b);
+  for (const x of r.rows) (cells[x.cohort] ??= {})[x.n] = x.users;
+  const cur = Math.floor((Date.now() + tzMin() * 60000 + r.mon_ms) / r.week_ms), cols = [...Array(8).keys()];
+  if (!cohorts.length) return h('div', { class: 'mute' }, t('noData'));
+  return h('table', { class: 'heat' },
+    h('thead', {}, h('tr', {}, h('th', {}, t('cohort')), cols.map(n => h('th', {}, t('weekN', n))))),
+    h('tbody', {}, cohorts.map(c => {
+      const size = cells[c][0] || 0, label = new Date(c * r.week_ms - r.mon_ms).toISOString().slice(0, 10);
+      return h('tr', {}, h('td', { title: t('nUsers', size) }, label, h('span', { class: 'mute' }, ` · ${size}`)),
+        cols.map(n => {
+          if (c + n > cur || !size) return h('td', {});
+          const pct = (cells[c][n] || 0) / size;
+          return h('td', { class: 'cell', style: `background:rgba(76,120,255,${(0.08 + 0.85 * pct).toFixed(2)})`, title: `${t('nUsers', cells[c][n] || 0)} / ${size}` }, Math.round(pct * 100) + '%');
+        }));
+    })));
+}
+
+// Top 8 versions by users, everything else grouped as "other".
+function versionsChart(rows, days) {
+  const total = {}; for (const r of rows) total[r.v] = (total[r.v] || 0) + r.users;
+  const top = Object.keys(total).sort((a, b) => total[b] - total[a]).slice(0, 8);
+  const defs = top.map((v, i) => ({ k: v, label: v === '' ? t('unknown') : v, color: PALETTE[i] }));
+  if (Object.keys(total).length > top.length) defs.push({ k: '__other', label: t('other'), color: OTHER });
+  const by = {}; for (const r of rows) { const k = top.includes(r.v) ? r.v : '__other', b = (by[r.t] ??= {}); b[k] = (b[k] || 0) + r.users; }
+  return stacked(bucketKeys(days).map(k => ({ t: k, v: by[k] || {} })), defs, true);
+}
 
 async function overviewView(app) {
-  const q = JSON.parse(sessionStorage.getItem('q') || '{"days":7,"test":0}');
-  const s = await api('GET', `/apps/${app.id}/stats?days=${q.days}&test=${q.test}&tz=${-new Date().getTimezoneOffset()}`);
-  const save = (k, v) => { q[k] = v; sessionStorage.setItem('q', JSON.stringify(q)); route(); };
-  const sel = (k, opts) => h('select', { onchange: e => save(k, +e.target.value) },
-    opts.map(([v, l]) => h('option', { value: v, selected: v === q[k] }, l)));
-  const tot = s.totals || { events: 0, users: 0, sessions: 0 };
   const dims = ['app_version', 'os_version', 'device_model', 'locale', 'country', 'city'];
-  return appShell(app, 'overview',
-    h('div', { class: 'row' }, sel('days', [[1, t('range1')], [7, t('range7')], [30, t('range30')], [90, t('range90')]]), sel('test', [[0, t('live')], [1, t('testData')]])),
-    h('div', { class: 'tiles' }, [[t('activeUsers'), tot.users], [t('events'), tot.events], [t('sessions'), tot.sessions]].map(([l, v]) =>
-      h('div', { class: 'card tile' }, h('b', {}, fmt(v)), h('span', {}, l)))),
-    h('div', { class: 'two' },
-      h('div', { class: 'card' }, h('h3', {}, t('activeUsers')), chart(fillSeries(s.series, q.days), 'users')),
-      h('div', { class: 'card' }, h('h3', {}, t('events')), chart(fillSeries(s.series, q.days), 'events', true))),
-    h('div', { class: 'card' }, h('h3', {}, t('topEvents')), bars(s.top, 'events')),
-    h('div', { class: 'two' }, dims.map(k =>
-      h('div', { class: 'card' }, h('h3', {}, t('dim_' + k), t('usersSuffix')), bars(s.dims[k], 'users')))));
+  return liveView(app, 'overview', async q => {
+    const [s, ret, ver] = await Promise.all([api('GET', `/apps/${app.id}/stats?${qs(q)}`), api('GET', `/apps/${app.id}/retention?${qs(q)}`), api('GET', `/apps/${app.id}/versions?${qs(q)}`)]);
+    const tot = s.totals || { events: 0, users: 0, sessions: 0 }, other = q.test ? 0 : 1;
+    return [
+      s.other_events > 0 ? h('div', { class: 'banner' }, h('span', {}, t(q.test ? 'hiddenLive' : 'hiddenTest', s.other_events)),
+        h('button', { onclick: () => { setQ('test', other); route(); } }, t(q.test ? 'switchLive' : 'switchTest'))) : null,
+      h('div', { class: 'tiles' }, [[t('lastHour'), s.last_hour_users], [t('activeUsers'), tot.users], [t('events'), tot.events], [t('sessions'), tot.sessions]].map(([l, v]) =>
+        h('div', { class: 'card tile' }, h('b', {}, fmt(v)), h('span', {}, l)))),
+      h('div', { class: 'two' }, card(t('activeUsers'), chart(fillSeries(s.series, q.days), 'users')), card(t('events'), chart(fillSeries(s.series, q.days), 'events', true))),
+      h('div', { class: 'two' }, card(t('retentionTitle'), retentionChart(ret)), card(t('versionsTitle'), versionsChart(ver, q.days))),
+      card(t('topEvents'), bars(s.top, 'events', r => h('span', { class: 'mute' }, ' · ' + t('nUsers', fmt(r.users))))),
+      h('div', { class: 'two' }, dims.map(k => card(t('dim_' + k) + t('usersSuffix'), bars(s.dims[k], 'users')))),
+    ];
+  });
+}
+
+async function usersView(app) {
+  return liveView(app, 'users', async q => {
+    const u = await api('GET', `/apps/${app.id}/users?${qs(q)}`), keys = bucketKeys(q.days);
+    const nw = Object.fromEntries(u.new.map(x => [x.t, x.users])), ac = Object.fromEntries(u.active.map(x => [x.t, x.users]));
+    const mix = keys.map(k => ({ t: k, v: { new: nw[k] || 0, ret: Math.max((ac[k] || 0) - (nw[k] || 0), 0) } }));
+    return [
+      h('div', { class: 'two' },
+        card(t('newUsers'), chart(keys.map(k => ({ t: k, users: nw[k] || 0 })), 'users', true)),
+        card(t('newVsReturning'), stacked(mix, [{ k: 'new', label: t('newUsers'), color: PALETTE[0] }, { k: 'ret', label: t('returning'), color: PALETTE[1] }], false))),
+      h('div', { class: 'mute' }, t('newNote')),
+    ];
+  });
+}
+
+async function typesView(app) {
+  return liveView(app, 'types', async q => {
+    const rows = await api('GET', `/apps/${app.id}/event-types?${qs(q)}`);
+    return [h('div', { class: 'card', style: 'overflow:auto' }, rows.length ? h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, t('colType')), ['colUsers', 'colEvents'].map(x => h('th', { class: 'num' }, t(x))), h('th', {}, t('colLast')))),
+      h('tbody', {}, rows.map(r => h('tr', {},
+        h('td', {}, h('a', { onclick: () => { try { sessionStorage.setItem('evfilter', r.type); } catch {} location.hash = `#/app/${app.id}/events`; } }, r.type)),
+        h('td', { class: 'num' }, r.users), h('td', { class: 'num' }, r.events), h('td', { class: 'mute' }, when(r.last_ts)))))) : h('div', { class: 'mute' }, t('noData')))];
+  });
+}
+
+async function errorsView(app) {
+  return liveView(app, 'errors', async q => {
+    const e = await api('GET', `/apps/${app.id}/errors?${qs(q)}`);
+    if (!e.top.length) return [h('div', { class: 'card mute' }, t('noErrors')), h('div', { class: 'mute' }, t('errorsNote'))];
+    return [
+      card(t('errorsTitle'), chart(fillSeries(e.series, q.days), 'events', true)),
+      h('div', { class: 'card', style: 'overflow:auto' }, h('table', {},
+        h('thead', {}, h('tr', {}, ['errId', 'errCategory', 'errMessage'].map(x => h('th', {}, t(x))), ['colEvents', 'colUsers'].map(x => h('th', { class: 'num' }, t(x))), h('th', {}, t('colLast')))),
+        h('tbody', {}, e.top.map(r => h('tr', {}, h('td', {}, r.err_id ?? '—'), h('td', { class: 'mute' }, r.err_category ?? ''), h('td', { class: 'mute' }, r.err_message ?? ''),
+          h('td', { class: 'num' }, r.events), h('td', { class: 'num' }, r.users), h('td', { class: 'mute' }, when(r.last_ts))))))),
+      h('div', { class: 'mute' }, t('errorsNote')),
+    ];
+  });
 }
 
 // The SDK's systemVersion already starts with the platform ("iOS 18.2.0"); only prefix bare numbers.
@@ -235,11 +424,14 @@ function params(json) {
 
 async function eventsView(app) {
   let kind = '', rows = [];
-  const tbody = h('tbody'), more = h('button', {}, t('loadMore')), type = h('input', { placeholder: t('filterPh') });
-  const load = async reset => {
-    if (reset) { rows = []; tbody.replaceChildren(); }
-    const before = rows.length ? `&before=${rows.at(-1).id}` : '';
+  try { kind = sessionStorage.getItem('evfilter') || ''; sessionStorage.removeItem('evfilter'); } catch {}
+  const tbody = h('tbody'), more = h('button', {}, t('loadMore')), type = h('input', { placeholder: t('filterPh'), value: kind }), status = h('span', { class: 'mute' });
+  const load = async (reset, force) => {
+    const before = !reset && rows.length ? `&before=${rows.at(-1).id}` : '';
     const page = await api('GET', `/apps/${app.id}/events?limit=100&type=${encodeURIComponent(kind)}${before}`);
+    // On refresh, leave the DOM alone when nothing is new so expanded parameters stay open (new events always have a larger id).
+    if (reset && !force && rows.length && page[0]?.id === rows[0].id) return;
+    if (reset) { rows = []; tbody.replaceChildren(); }
     rows.push(...page);
     for (const r of page) tbody.append(h('tr', {},
       h('td', {}, when(r.ts), r.is_test ? ' 🧪' : ''), h('td', {}, r.type),
@@ -247,10 +439,12 @@ async function eventsView(app) {
       h('td', { class: 'm' }, r.payload === '{}' ? '' : params(r.payload))));
     more.style.display = page.length < 100 ? 'none' : '';
   };
-  type.addEventListener('keydown', e => { if (e.key === 'Enter') { kind = type.value.trim(); load(true); } });
+  await load(true, true);
+  status.textContent = t('updatedAt', nowLabel());
+  const controls = refreshControls(() => load(true), status);
+  type.addEventListener('keydown', e => { if (e.key === 'Enter') { kind = type.value.trim(); load(true, true); } });
   more.addEventListener('click', () => load(false));
-  await load(true);
-  return appShell(app, 'events', h('div', { class: 'row' }, type, h('span', { class: 'mute' }, t('filterHint'))),
+  return appShell(app, 'events', h('div', { class: 'row' }, type, h('span', { class: 'mute' }, t('filterHint')), h('span', { class: 'sp' }), ...controls),
     h('div', { class: 'card', style: 'overflow:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['colTime', 'colEvent', 'colEnv', 'colParams'].map(x => h('th', {}, t(x))))), tbody)), more);
 }
 
@@ -281,16 +475,20 @@ async function settingsView(app) {
       h('button', { class: 'd', onclick: async () => { if (confirm(t('deleteConfirm', app.name))) { await api('DELETE', `/apps/${app.id}`); location.hash = '#/'; } } }, t('deleteApp'))));
 }
 
+const VIEWS = { overview: overviewView, users: usersView, events: eventsView, types: typesView, errors: errorsView, settings: settingsView };
 async function route() {
+  clearInterval(timer); runCurrent = null;
   const parts = location.hash.slice(2).split('/');
   try {
     let view;
     if (parts[0] === 'login') view = loginView();
     else if (parts[0] === 'app' && parts[1]) {
-      const app = await api('GET', `/apps/${parts[1]}`);
-      view = await ({ events: eventsView, settings: settingsView }[parts[2]] || overviewView)(app);
+      const [app, summary, apps] = await Promise.all([api('GET', `/apps/${parts[1]}`), api('GET', `/apps/${parts[1]}/summary`), api('GET', '/apps')]);
+      app.summary = summary; app.apps = apps;
+      view = await (VIEWS[parts[2]] || overviewView)(app);
     } else view = await appsView();
     $app.replaceChildren(view);
+    schedule();
   } catch (e) { if (e.message !== 'unauth') $app.replaceChildren(h('main', {}, h('div', { class: 'card' }, t('error') + e.message))); }
 }
 addEventListener('hashchange', () => { scrollTo(0, 0); route(); });

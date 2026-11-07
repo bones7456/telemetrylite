@@ -6,8 +6,8 @@ A lightweight event-collection server: a single Rust binary plus SQLite. It acce
 
 - Ingest: `/k/<key>/v2/` (TelemetryDeck) and `/v1/logs` (OTLP, protobuf or JSON, gzip supported)
 - Never stores IP addresses; optional GeoIP (DB-IP City Lite) resolves country / region / city
-- Admin UI: overview (user and event trends, top events, breakdowns by app version / OS / device / locale / country / city), event browser, API key management
-- Design notes: [DESIGN.md](DESIGN.md) (in Chinese)
+- Admin UI: overview (active users and events, weekly retention cohorts, app versions over time, top events, breakdowns by app version / OS / device / locale / country / city), new vs returning users, event types, errors, event browser, API key management; a hint when test-mode events are hidden; manual refresh (default) or optional auto refresh that only re-fetches data
+- Design notes: [DESIGN.md](DESIGN.md)
 
 ## Install
 

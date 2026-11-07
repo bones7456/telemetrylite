@@ -1,6 +1,7 @@
 mod admin;
 mod db;
 mod geo;
+mod i18n;
 mod ingest;
 
 use axum::{Router, extract::DefaultBodyLimit, response::Html, routing::post};
@@ -41,15 +42,15 @@ async fn main() {
     let geo_path = env("TL_GEOIP_DB").map(PathBuf::from).or_else(|| auto_update.then(|| "./dbip-city-lite.mmdb".into()));
     let trusted = env("TL_TRUSTED_PROXY").map(|v| v.split(',').filter_map(|i| i.trim().parse().ok()).collect()).unwrap_or_default();
 
-    let conn = db::open(&db_path).expect("打开数据库失败");
-    db::init(&conn).expect("初始化表失败");
+    let conn = db::open(&db_path).unwrap_or_else(|e| panic!("{}: {e}", i18n::tr("failed to open the database", "打开数据库失败")));
+    db::init(&conn).unwrap_or_else(|e| panic!("{}: {e}", i18n::tr("failed to initialize the schema", "初始化表失败")));
     let salt = db::meta_get(&conn, "salt").unwrap_or_else(|| {
         let s = hex::encode(rand::random::<[u8; 16]>());
         db::meta_set(&conn, "salt", &s).unwrap();
         s
     });
     setup_admin_password(&conn);
-    let keys = admin::load_keys(&conn).expect("加载 key 失败");
+    let keys = admin::load_keys(&conn).unwrap_or_else(|e| panic!("{}: {e}", i18n::tr("failed to load API keys", "加载 key 失败")));
 
     let (tx, writer) = db::spawn_writer(db_path.clone());
     let geo = Arc::new(geo::Geo::new(geo_path));
@@ -74,8 +75,8 @@ async fn main() {
         .layer(DefaultBodyLimit::max(2 << 20))
         .with_state(state.clone());
 
-    let listener = tokio::net::TcpListener::bind(&listen).await.expect("监听失败");
-    tracing::info!("监听 http://{listen}");
+    let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| panic!("{}: {e}", i18n::tr("failed to bind the listen address", "监听失败")));
+    i18n::log_tr!(info, "listening on http://{listen}", "监听 http://{listen}");
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown())
         .await
@@ -93,7 +94,7 @@ fn setup_admin_password(conn: &Connection) {
     } else if db::meta_get(conn, "admin_hash").is_none() {
         let pw = hex::encode(rand::random::<[u8; 8]>());
         db::meta_set(conn, "admin_hash", &admin::hash_pw(&pw)).unwrap();
-        tracing::warn!("已生成管理员密码(仅显示一次): {pw}");
+        i18n::log_tr!(warn, "generated admin password (shown only once): {pw}", "已生成管理员密码(仅显示一次): {pw}");
     }
 }
 
@@ -102,8 +103,8 @@ async fn retention_job(db_path: String) {
         let p = db_path.clone();
         let r = tokio::task::spawn_blocking(move || db::purge_expired(&db::open(&p)?)).await;
         match r {
-            Ok(Ok(n)) if n > 0 => tracing::info!("清理过期事件 {n} 条"),
-            Ok(Err(e)) => tracing::warn!("清理失败: {e}"),
+            Ok(Ok(n)) if n > 0 => i18n::log_tr!(info, "purged {n} expired events", "清理过期事件 {n} 条"),
+            Ok(Err(e)) => i18n::log_tr!(warn, "purge failed: {e}", "清理失败: {e}"),
             _ => {}
         }
         tokio::time::sleep(Duration::from_secs(3600)).await;

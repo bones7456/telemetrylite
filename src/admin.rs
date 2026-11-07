@@ -89,7 +89,13 @@ pub fn router(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/apps/{id}", get(app_get).patch(app_update).delete(app_delete))
         .route("/api/apps/{id}/keys", get(keys_list).post(key_create))
         .route("/api/keys/{id}", delete(key_revoke))
+        .route("/api/apps/{id}/summary", get(summary))
         .route("/api/apps/{id}/stats", get(stats))
+        .route("/api/apps/{id}/event-types", get(event_types))
+        .route("/api/apps/{id}/users", get(users))
+        .route("/api/apps/{id}/retention", get(retention))
+        .route("/api/apps/{id}/versions", get(versions))
+        .route("/api/apps/{id}/errors", get(errors))
         .route("/api/apps/{id}/events", get(events))
         .layer(middleware::from_fn_with_state(st, require_auth));
     Router::new().route("/api/login", post(login)).route("/api/logout", post(logout)).merge(authed)
@@ -233,13 +239,30 @@ const DIMS: [(&str, &str); 6] = [
     ("city", "city"),
 ];
 
-async fn stats(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+/// SDK 预设错误事件的类型名。
+const ERR_TYPE: &str = "TelemetryDeck.Error.occurred";
+
+/// 统一解析查询窗口:`days`(时间范围)、`test`(0 正式 / 1 测试)、`tz`(浏览器相对 UTC 的分钟数,图表按本地时区分桶)。
+struct Win {
+    since: i64,
+    test: i64,
+    fmt: &'static str,
+    tz_sec: i64,
+}
+
+fn win(p: &HashMap<String, String>) -> Win {
     let days: i64 = p.get("days").and_then(|d| d.parse().ok()).unwrap_or(7).clamp(1, 3650);
-    let test = i64::from(p.get("test").is_some_and(|t| t == "1"));
-    let since = now_ms() - days * 86_400_000;
-    let fmt = if days <= 1 { "%Y-%m-%d %H:00" } else { "%Y-%m-%d" };
-    // 图表按浏览器本地时区分桶;tz 为相对 UTC 的分钟数
-    let tz_sec = p.get("tz").and_then(|t| t.parse::<i64>().ok()).unwrap_or(0).clamp(-840, 840) * 60;
+    Win {
+        since: now_ms() - days * 86_400_000,
+        test: i64::from(p.get("test").is_some_and(|t| t == "1")),
+        fmt: if days <= 1 { "%Y-%m-%d %H:00" } else { "%Y-%m-%d" },
+        tz_sec: p.get("tz").and_then(|t| t.parse::<i64>().ok()).unwrap_or(0).clamp(-840, 840) * 60,
+    }
+}
+
+async fn stats(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    let Win { since, test, fmt, tz_sec } = win(&p);
+    let (hour_ago, other) = (now_ms() - 3_600_000, 1 - test);
     let out = with_db(&st, move |c| {
         let w = "FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3";
         let args: &[&dyn ToSql] = &[&id, &since, &test];
@@ -249,10 +272,97 @@ async fn stats(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<Str
         let top = q(c, &format!("SELECT type, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY type ORDER BY events DESC LIMIT 20"), args)?;
         let mut dims = Map::new();
         for (name, expr) in DIMS {
-            let rows = q(c, &format!("SELECT COALESCE(NULLIF({expr},''),'(未知)') v, COUNT(DISTINCT user_hash) users, COUNT(*) events {w} GROUP BY v ORDER BY users DESC, events DESC LIMIT 8"), args)?;
+            let rows = q(c, &format!("SELECT COALESCE(NULLIF({expr},''),'') v, COUNT(DISTINCT user_hash) users, COUNT(*) events {w} GROUP BY v ORDER BY users DESC, events DESC LIMIT 8"), args)?;
             dims.insert(name.into(), Value::Array(rows));
         }
-        Ok(json!({ "totals": totals.first(), "series": series, "top": top, "dims": dims }))
+        // 最近 1 小时的用户数(接入调试用);另一种数据类型(正式/测试)里有多少事件,用于提示
+        let last_hour = q(c, &format!("SELECT COUNT(DISTINCT user_hash) n {w}"), &[&id, &hour_ago, &test])?;
+        let hidden = q(c, &format!("SELECT COUNT(*) n {w}"), &[&id, &since, &other])?;
+        Ok(json!({ "totals": totals.first(), "series": series, "top": top, "dims": dims,
+                   "last_hour_users": last_hour[0]["n"], "other_events": hidden[0]["n"] }))
+    }).await?;
+    Ok(Json(out))
+}
+
+/// 页头的三个数字:用户数、最常用的 SDK、错误数(最近 90 天正式数据)。
+async fn summary(State(st): S, Path(id): Path<String>) -> R {
+    let since = now_ms() - 90 * 86_400_000;
+    let out = with_db(&st, move |c| {
+        let w = "FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=0";
+        let users = q(c, &format!("SELECT COUNT(DISTINCT user_hash) n {w}"), &[&id, &since])?;
+        let sdk = q(c, &format!("SELECT sdk {w} AND sdk IS NOT NULL AND sdk <> '' GROUP BY sdk ORDER BY COUNT(*) DESC LIMIT 1"), &[&id, &since])?;
+        let errs = q(c, &format!("SELECT COUNT(*) n {w} AND type=?3"), &[&id, &since, &ERR_TYPE])?;
+        Ok(json!({ "users": users[0]["n"], "sdk": sdk.first().map(|r| r["sdk"].clone()), "errors": errs[0]["n"] }))
+    }).await?;
+    Ok(Json(out))
+}
+
+async fn event_types(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    let Win { since, test, .. } = win(&p);
+    let rows = with_db(&st, move |c| q(c,
+        "SELECT type, COUNT(DISTINCT user_hash) users, COUNT(*) events, MAX(ts) last_ts
+         FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 GROUP BY type ORDER BY events DESC LIMIT 500",
+        &[&id, &since, &test])).await?;
+    Ok(Json(Value::Array(rows)))
+}
+
+/// 新用户(按用户在已存储数据里的首次出现时间)与活跃用户。
+async fn users(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    let Win { since, test, fmt, tz_sec } = win(&p);
+    let out = with_db(&st, move |c| {
+        let new = q(c, "SELECT strftime(?4, f/1000 + ?5, 'unixepoch') t, COUNT(*) users FROM
+                (SELECT MIN(ts) f FROM signal WHERE app_id=?1 AND is_test=?3 AND user_hash IS NOT NULL GROUP BY user_hash)
+              WHERE f >= ?2 GROUP BY t ORDER BY t", &[&id, &since, &test, &fmt, &tz_sec])?;
+        let active = q(c, "SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COUNT(DISTINCT user_hash) users
+              FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 GROUP BY t ORDER BY t", &[&id, &since, &test, &fmt, &tz_sec])?;
+        Ok(json!({ "new": new, "active": active }))
+    }).await?;
+    Ok(Json(out))
+}
+
+/// 按周的留存队列:最近 8 个周,每个队列在之后各周仍活跃的用户数。周从周一起算(按浏览器时区)。
+async fn retention(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    const WEEK: i64 = 7 * 86_400_000;
+    const MON: i64 = 3 * 86_400_000; // unix 纪元是周四,偏移 3 天后按周一分周
+    let Win { test, tz_sec, .. } = win(&p);
+    let tz = tz_sec * 1000;
+    let cur = (now_ms() + tz + MON) / WEEK;
+    let first_cohort = cur - 7;
+    let active_since = now_ms() - 9 * WEEK;
+    let rows = with_db(&st, move |c| q(c,
+        "WITH f AS (SELECT user_hash, MIN(ts) first_ts FROM signal WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL GROUP BY user_hash),
+              a AS (SELECT DISTINCT user_hash, (ts + ?3 + ?6) / ?7 AS wk FROM signal
+                    WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL AND ts >= ?4),
+              j AS (SELECT (f.first_ts + ?3 + ?6) / ?7 AS cohort, a.wk AS wk FROM f JOIN a ON a.user_hash = f.user_hash)
+         SELECT cohort, wk - cohort AS n, COUNT(*) users FROM j
+         WHERE cohort >= ?5 AND wk >= cohort GROUP BY cohort, n ORDER BY cohort, n",
+        &[&id, &test, &tz, &active_since, &first_cohort, &MON, &WEEK])).await?;
+    Ok(Json(json!({ "rows": rows, "week_ms": WEEK, "mon_ms": MON })))
+}
+
+/// 各 App 版本的用户数随时间变化(客户端取前 8 个版本画堆叠图)。
+async fn versions(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    let Win { since, test, fmt, tz_sec } = win(&p);
+    let rows = with_db(&st, move |c| q(c,
+        "SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COALESCE(NULLIF(app_version,''),'') v, COUNT(DISTINCT user_hash) users
+         FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 GROUP BY t, v ORDER BY t",
+        &[&id, &since, &test, &fmt, &tz_sec])).await?;
+    Ok(Json(Value::Array(rows)))
+}
+
+/// SDK 预设错误事件(`TelemetryDeck.Error.occurred`):趋势、按错误 id 汇总。
+async fn errors(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    let Win { since, test, fmt, tz_sec } = win(&p);
+    let out = with_db(&st, move |c| {
+        let w = "FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3 AND type=?4";
+        let series = q(c, &format!("SELECT strftime(?5, ts/1000 + ?6, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY t ORDER BY t"),
+            &[&id, &since, &test, &ERR_TYPE, &fmt, &tz_sec])?;
+        let top = q(c, &format!("SELECT json_extract(payload,'$.\"TelemetryDeck.Error.id\"') err_id,
+                json_extract(payload,'$.\"TelemetryDeck.Error.category\"') err_category,
+                MAX(json_extract(payload,'$.\"TelemetryDeck.Error.message\"')) err_message,
+                COUNT(*) events, COUNT(DISTINCT user_hash) users, MAX(ts) last_ts
+             {w} GROUP BY err_id, err_category ORDER BY events DESC LIMIT 100"), &[&id, &since, &test, &ERR_TYPE])?;
+        Ok(json!({ "series": series, "top": top }))
     }).await?;
     Ok(Json(out))
 }
