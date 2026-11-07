@@ -62,6 +62,8 @@ It should return `200`; the event shows up on the Events page (🧪 marks test d
 
 ## Connecting apps
 
+Let an AI coding agent do it: copy the prompt from [AGENT_PROMPT.md](AGENT_PROMPT.md). Or by hand:
+
 **TelemetryDeck SDK (Swift)** — the key goes into the base URL path:
 
 ```swift

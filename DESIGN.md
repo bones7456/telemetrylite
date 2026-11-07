@@ -14,6 +14,7 @@ English | [简体中文](DESIGN.zh-CN.md)
 | Accounts | One admin, many apps; each app can issue several write-only API keys |
 | Scale | Self-hosted single machine, up to about 1 M events per day |
 | Privacy | Never store IPs; GeoIP is resolved in memory and only country / region / city are kept |
+| Onboarding | **AI-assisted integration**: the UI generates a per-app prompt (server URL, app id, key filled in) that a coding agent follows to integrate the SDK |
 | UI languages | English (default) and Chinese, switchable in the page; docs and CLI output are bilingual too |
 
 ## 2. Architecture
@@ -137,7 +138,7 @@ One HTML file, plain JavaScript, inline SVG charts, light/dark by system setting
 - **Event types**: every event type with users, events and last-seen time; a name opens the Events page filtered to it.
 - **Errors**: trend and a table grouped by error id and category, from the SDK's preset `TelemetryDeck.Error.occurred` event.
 - **Events**: recent raw events, exact event-name filter, custom parameters inline, `TelemetryDeck.*` system parameters collapsed.
-- **Settings**: rename, retention days, write-key management (copy-once keys with ready-made integration snippets, revoke), delete app.
+- **Settings**: rename, retention days, write-key management (copy-once keys with ready-made integration snippets, revoke), an **AI-agent integration prompt** (filled in with the browser's server URL, the app id and — once issued — the write key, in the UI language; the text lives in `web/index.html` and must be kept in sync with `docs/AGENT_PROMPT*.md`), delete app.
 - **Refresh**: a manual Refresh button (default) and an optional auto refresh (10 s / 30 s / 1 min / 5 min, remembered in the browser). Both only re-fetch data and update the view in place; auto refresh pauses in background tabs, never overlaps requests, and the events page leaves the DOM alone when there is nothing new, so expanded parameters stay open.
 - **Languages**: English by default, Chinese selectable from the header; the choice is remembered in `localStorage`.
 

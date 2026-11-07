@@ -4,9 +4,12 @@
 
 轻量的事件收集服务:Rust 单二进制 + SQLite。同时兼容 **TelemetryDeck SDK** 与 **OTLP/HTTP Logs**,自带管理界面与 API key 签发。管理界面支持中文和英文。
 
+> **一次粘贴,让 AI 完成接入。** 管理界面会为每个 App 生成一段现成的提示词,服务器地址、App ID 和写入 key 都已自动填好。复制给 Claude Code、Codex 或 Cursor,你的编程 agent 就会添加 SDK、指向你的服务器并验证连通性。不用读文档,不用改代码片段。→ [使用方法](#接入)
+
 - 写入:`/k/<key>/v2/`(TelemetryDeck)、`/v1/logs`(OTLP,protobuf/JSON,支持 gzip)
 - 不存 IP;可选 GeoIP(DB-IP City Lite)解析国家/地区/城市
 - 管理界面:概览(活跃用户与事件、按周留存队列、App 版本随时间变化、热门事件、版本/系统/机型/语言/国家/城市分布)、新用户与回访用户、事件类型、错误、事件浏览器、API key 管理;测试事件被隐藏时有提示;支持手动刷新(默认)和可选的自动刷新,刷新只重新请求数据
+- **AI 辅助接入**:按 App 生成、信息全部填好的提示词,复制给编程 agent 即可(中英文)
 - 设计说明见 [DESIGN.zh-CN.md](DESIGN.zh-CN.md)
 
 ## 安装
@@ -84,6 +87,16 @@ git tag v0.1.0 && git push origin v0.1.0
 ## 接入
 
 在管理界面「设置」中签发写入 key(只显示一次),界面会给出接入片段。
+
+**让 AI 编程 agent 代劳(推荐)。** 在管理界面打开你的 App → 设置 →「让 AI agent 完成接入」:
+
+1. 签发一个写入 key。下方的提示词会自动填入本服务器地址、App ID 和新 key。
+2. 点「复制提示词」。
+3. 在你的 App 仓库根目录,粘贴给 Claude Code、Codex、Cursor 或任何编程 agent。
+
+agent 会识别你的平台、添加 SDK、指向你的服务器、构建项目,并用一条测试事件确认 key 可用。手动使用的同一段提示词见 **[docs/AGENT_PROMPT.zh-CN.md](docs/AGENT_PROMPT.zh-CN.md)**。
+
+也可以手动接入:
 
 **TelemetryDeck SDK(Swift)**
 

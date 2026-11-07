@@ -4,9 +4,12 @@ English | [简体中文](README.zh-CN.md)
 
 A lightweight event-collection server: a single Rust binary plus SQLite. It accepts events from the **TelemetryDeck SDKs** and from **OTLP/HTTP Logs**, and ships with an admin UI and write-only API key management. The UI is available in English and Chinese.
 
+> **Integration by AI, in one paste.** The admin UI generates a ready-made prompt with your server URL, app id and write key already filled in. Copy it into Claude Code, Codex or Cursor, and your coding agent adds the SDK, points it at your server and verifies the connection. No docs to read, no snippets to adapt. → [How it works](#connecting-apps)
+
 - Ingest: `/k/<key>/v2/` (TelemetryDeck) and `/v1/logs` (OTLP, protobuf or JSON, gzip supported)
 - Never stores IP addresses; optional GeoIP (DB-IP City Lite) resolves country / region / city
 - Admin UI: overview (active users and events, weekly retention cohorts, app versions over time, top events, breakdowns by app version / OS / device / locale / country / city), new vs returning users, event types, errors, event browser, API key management; a hint when test-mode events are hidden; manual refresh (default) or optional auto refresh that only re-fetches data
+- **AI-assisted integration**: a copy-and-paste prompt for your coding agent, generated per app with everything filled in (English and Chinese)
 - Design notes: [DESIGN.md](DESIGN.md)
 
 ## Install
@@ -83,6 +86,16 @@ To deploy from source to your own server: `./scripts/deploy.sh you@server [domai
 ## Connecting apps
 
 Issue a write key under Settings in the admin UI (shown only once); the UI also shows ready-to-paste snippets.
+
+**Let your AI coding agent do it (recommended).** In the admin UI open your app → Settings → "Integrate with an AI agent":
+
+1. Issue a write key. The prompt below it fills in this server's URL, the app id and the new key by itself.
+2. Press "Copy prompt".
+3. Paste it into Claude Code, Codex, Cursor or any coding agent, from the root of your app's repository.
+
+The agent detects your platform, adds the SDK, points it at your server, builds the project and checks with a test event that the key works. The same prompt for manual use is in **[docs/AGENT_PROMPT.md](docs/AGENT_PROMPT.md)**.
+
+Or do it by hand:
 
 **TelemetryDeck SDK (Swift)**
 

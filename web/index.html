@@ -37,6 +37,7 @@ th{color:var(--mute);font-weight:600}td.m{font-family:ui-monospace,Menlo,monospa
 pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:12px;margin:8px 0}
 .mute{color:var(--mute)}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 svg{width:100%;height:auto;display:block}
+textarea{width:100%;font:12px/1.5 ui-monospace,Menlo,monospace;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;resize:vertical}
 summary{cursor:pointer}
 .summary{display:flex;gap:32px;flex-wrap:wrap;margin:0 0 16px}.summary div{display:flex;flex-direction:column}.summary b{font-size:18px}
 .banner{background:rgba(242,169,59,.13);border:1px solid rgba(242,169,59,.55);border-radius:8px;padding:8px 12px;margin-bottom:16px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
@@ -82,6 +83,42 @@ const I18N = {
     danger: 'Danger zone', deleteApp: 'Delete app and all its data',
     deleteConfirm: name => `Delete app “${name}” and all of its data? This cannot be undone.`,
     error: 'Something went wrong: ',
+    agentTitle: 'Integrate with an AI agent',
+    agentHint: 'Copy this prompt into Claude Code, Codex or Cursor, from the root of your app repository. The server URL and app id are filled in. The key is shown only once: issue a new key above and it is filled in automatically.',
+    agentNoKey: 'The write key is not filled in yet. Issue a new key above.', agentKeyFilled: 'The new key is filled in.',
+    agentCopy: 'Copy prompt', agentCopied: 'Copied',
+    agentPrompt: String.raw`Integrate this project with my self-hosted TelemetryLite analytics server, which is compatible
+with the TelemetryDeck SDKs.
+
+Values (never invent them; if one is still a <placeholder>, ask me):
+- Server URL: <SERVER_URL>
+- Write key:  <WRITE_KEY>
+- App ID:     <APP_ID>
+
+Steps:
+1. Detect the platform and build system. Say which route below you use before editing files.
+2. Integrate, once at app launch:
+   - Swift (iOS/macOS/watchOS/tvOS/visionOS): add the Swift package
+     https://github.com/TelemetryDeck/SwiftSDK (Up to Next Major, library "TelemetryDeck"), then
+         import TelemetryDeck
+         let config = TelemetryDeck.Config(appID: "<APP_ID>", baseURL: URL(string: "<SERVER_URL>/k/<WRITE_KEY>/")!)
+         TelemetryDeck.initialize(config: config)
+         TelemetryDeck.signal("App.launched")
+   - Other platforms: add that platform's official TelemetryDeck SDK and set its custom API base URL
+     to  <SERVER_URL>/k/<WRITE_KEY>/  (keep the trailing slash; the SDK appends "v2/" itself).
+     If the SDK has no such option, use plain HTTP instead:
+         POST <SERVER_URL>/k/<WRITE_KEY>/v2/   Content-Type: application/json
+         body: [{"appID":"<APP_ID>","clientUser":"<anonymous user id>","sessionID":"<session id>",
+                 "type":"App.launched","payload":{},"isTestMode":"true"}]
+   - Already using OpenTelemetry? Export Logs over OTLP/HTTP instead:
+     endpoint <SERVER_URL>/v1/logs, header "Authorization: Bearer <WRITE_KEY>", event name in
+     LogRecord.event_name.
+3. Build the project, and check that the server accepts the key (expect HTTP 200):
+     curl -i -X POST "<SERVER_URL>/k/<WRITE_KEY>/v2/" -H 'content-type: application/json' \
+       -d '[{"type":"Integration.test","clientUser":"agent-test","sessionID":"s1","isTestMode":"true","payload":{}}]'
+   (401 = wrong key, 503 = busy.) Then tell me how to see the event: admin UI -> your app ->
+   Events page (it includes test data).
+4. Keep the change minimal: only what is needed to connect. Do not add other events or refactor.`,
     refresh: 'Refresh', autoRefresh: 'Auto refresh', autoOff: 'Off (manual)', auto10: 'Every 10 s', auto30: 'Every 30 s',
     auto60: 'Every 1 min', auto300: 'Every 5 min', updatedAt: ts => `Updated ${ts}`, refreshFailed: 'Refresh failed',
   },
@@ -116,6 +153,41 @@ const I18N = {
     danger: '危险操作', deleteApp: '删除 App 及全部数据',
     deleteConfirm: name => `删除 App「${name}」及其全部数据?不可恢复。`,
     error: '出错了:',
+    agentTitle: '让 AI agent 完成接入',
+    agentHint: '在你的 App 仓库根目录,把这段提示词复制给 Claude Code、Codex 或 Cursor。服务器地址和 App ID 已自动填好。key 只显示一次:在上方签发新 key 后会自动填进去。',
+    agentNoKey: '写入 key 还没填入,请先在上方签发新 key。', agentKeyFilled: '新签发的 key 已填入。',
+    agentCopy: '复制提示词', agentCopied: '已复制',
+    agentPrompt: String.raw`把这个项目接入我自托管的 TelemetryLite 统计服务,它兼容 TelemetryDeck SDK。
+
+参数(不要自己编造;如果下面仍是 <占位符>,先问我):
+- 服务器地址: <SERVER_URL>
+- 写入 key:   <WRITE_KEY>
+- App ID:     <APP_ID>
+
+步骤:
+1. 识别平台和构建系统。修改文件之前,先说明你要用下面哪种方式。
+2. 在 App 启动时集成(只初始化一次):
+   - Swift(iOS/macOS/watchOS/tvOS/visionOS):添加 Swift Package
+     https://github.com/TelemetryDeck/SwiftSDK(Up to Next Major,库选 "TelemetryDeck"),然后
+         import TelemetryDeck
+         let config = TelemetryDeck.Config(appID: "<APP_ID>", baseURL: URL(string: "<SERVER_URL>/k/<WRITE_KEY>/")!)
+         TelemetryDeck.initialize(config: config)
+         TelemetryDeck.signal("App.launched")
+   - 其他平台:添加该平台官方的 TelemetryDeck SDK,并把它的自定义 API base URL 设为
+     <SERVER_URL>/k/<WRITE_KEY>/ (保留末尾斜杠;SDK 会自己拼上 "v2/")。
+     如果 SDK 没有这个选项,改用纯 HTTP:
+         POST <SERVER_URL>/k/<WRITE_KEY>/v2/   Content-Type: application/json
+         body: [{"appID":"<APP_ID>","clientUser":"<匿名用户 id>","sessionID":"<会话 id>",
+                 "type":"App.launched","payload":{},"isTestMode":"true"}]
+   - 项目已在用 OpenTelemetry?改用 OTLP/HTTP 导出 Logs:
+     endpoint <SERVER_URL>/v1/logs,请求头 "Authorization: Bearer <WRITE_KEY>",事件名放在
+     LogRecord.event_name。
+3. 构建项目,并确认服务器接受这个 key(应返回 HTTP 200):
+     curl -i -X POST "<SERVER_URL>/k/<WRITE_KEY>/v2/" -H 'content-type: application/json' \
+       -d '[{"type":"Integration.test","clientUser":"agent-test","sessionID":"s1","isTestMode":"true","payload":{}}]'
+   (401 = key 错误,503 = 服务繁忙。)然后告诉我在哪里看到这条事件:管理界面 → 你的 App →
+   「事件」页(包含测试数据)。
+4. 改动保持最小:只做接入所需的部分,不要添加其他事件,也不要重构。`,
     refresh: '刷新', autoRefresh: '自动刷新', autoOff: '关闭(手动)', auto10: '每 10 秒', auto30: '每 30 秒',
     auto60: '每 1 分钟', auto300: '每 5 分钟', updatedAt: ts => `更新于 ${ts}`, refreshFailed: '刷新失败',
   },
@@ -455,13 +527,24 @@ async function eventsView(app) {
     h('div', { class: 'card', style: 'overflow:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['colTime', 'colEvent', 'colEnv', 'colParams'].map(x => h('th', {}, t(x))))), tbody)), more);
 }
 
+// Prompt for AI coding agents, filled with this server's URL, the app id and (once issued) the write key.
+// Keep in sync with docs/AGENT_PROMPT*.md.
+const agentPrompt = (app, key) => t('agentPrompt').split('<SERVER_URL>').join(location.origin).split('<APP_ID>').join(app.id).split('<WRITE_KEY>').join(key || '<WRITE_KEY>');
+
 async function settingsView(app) {
   const keys = await api('GET', `/apps/${app.id}/keys`);
   const name = h('input', { value: app.name }), days = h('input', { type: 'number', value: app.retention_days, style: 'width:90px' });
   const label = h('input', { placeholder: t('keyLabelPh') }), fresh = h('div');
   const origin = location.origin;
+  const promptBox = h('textarea', { readonly: true, rows: 14, spellcheck: 'false' }), promptNote = h('div', { class: 'mute' }, t('agentNoKey')), copied = h('span', { class: 'mute' });
+  promptBox.value = agentPrompt(app, null);
+  const copyPrompt = async () => {
+    try { await navigator.clipboard.writeText(promptBox.value); } catch { promptBox.select(); document.execCommand('copy'); }
+    copied.textContent = t('agentCopied'); setTimeout(() => { copied.textContent = ''; }, 2000);
+  };
   const mk = async () => {
     const { key } = await api('POST', `/apps/${app.id}/keys`, { label: label.value });
+    promptBox.value = agentPrompt(app, key); promptNote.textContent = t('agentKeyFilled');
     fresh.replaceChildren(h('div', { class: 'card' }, h('b', {}, t('newKeyTitle')), h('pre', {}, key),
       h('h3', {}, 'TelemetryDeck SDK (Swift)'),
       h('pre', {}, `let config = TelemetryDeck.Config(appID: "${app.id}", baseURL: URL(string: "${origin}/k/${key}/")!)\nTelemetryDeck.initialize(config: config)`),
@@ -478,6 +561,8 @@ async function settingsView(app) {
       h('table', {}, h('thead', {}, h('tr', {}, ['colLabel', 'colPrefix', 'colCreated', ''].map(x => h('th', {}, x && t(x))))),
         h('tbody', {}, keys.map(k => h('tr', {}, h('td', {}, k.label), h('td', { class: 'm' }, k.prefix + '…'), h('td', {}, when(k.created_at)),
           h('td', {}, k.revoked_at ? h('span', { class: 'mute' }, t('revoked')) : h('a', { onclick: async () => { if (confirm(t('revokeConfirm'))) { await api('DELETE', `/keys/${k.id}`); route(); } } }, t('revoke')))))))),
+    h('div', { class: 'card' }, h('h3', {}, t('agentTitle')), h('div', { class: 'mute', style: 'margin-bottom:8px' }, t('agentHint')), promptBox,
+      h('div', { class: 'row', style: 'margin:8px 0 0' }, h('button', { class: 'p', onclick: copyPrompt }, t('agentCopy')), copied, h('span', { class: 'sp' }), promptNote)),
     h('div', { class: 'card' }, h('h3', {}, t('danger')),
       h('button', { class: 'd', onclick: async () => { if (confirm(t('deleteConfirm', app.name))) { await api('DELETE', `/apps/${app.id}`); location.hash = '#/'; } } }, t('deleteApp'))));
 }

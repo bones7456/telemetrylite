@@ -62,6 +62,8 @@ curl -i -X POST https://telemetry.example.com/k/<key>/v2/ -H 'content-type: appl
 
 ## 接入 App
 
+可以让 AI 编程 agent 代劳:复制 [AGENT_PROMPT.zh-CN.md](AGENT_PROMPT.zh-CN.md) 里的提示词。也可以手动接入:
+
 **TelemetryDeck SDK(Swift)**,key 放在 base URL 路径里:
 
 ```swift
