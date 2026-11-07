@@ -76,7 +76,7 @@ fn clip(mut s: String) -> String {
 }
 
 struct Ctx<'a> {
-    st: &'a AppState,
+    salt: &'a str,
     app_id: &'a str,
     place: crate::geo::Place,
     now: i64,
@@ -86,12 +86,11 @@ impl Ctx<'_> {
     /// `attrs` 进 payload;维度列从 `attrs` 再到 `extra`(OTLP 的 Resource 属性)中查找。
     fn signal(&self, kind: String, ts: i64, user: Option<&str>, session: Option<String>, attrs: &Attrs, extra: &Attrs, dims: &Dims) -> Signal {
         let pick = |names: &[&str]| names.iter().find_map(|n| attrs.iter().chain(extra).find(|(k, _)| k == n).map(|(_, v)| clip(v.clone())));
-        let user_hash = user.filter(|u| !u.is_empty()).map(|u| sha256_hex(&format!("{}{}{}", self.st.salt, self.app_id, u)));
+        let user_hash = user.filter(|u| !u.is_empty()).map(|u| sha256_hex(&format!("{}{}{}", self.salt, self.app_id, u)));
         let mut payload = serde_json::Map::new();
-        for (k, v) in attrs.iter().take(MAX_ATTRS) {
-            if !dims.hidden.contains(&k.as_str()) {
-                payload.insert(k.clone(), Value::String(clip(v.clone())));
-            }
+        let kept = attrs.iter().filter(|(k, _)| !dims.hidden.contains(&k.as_str()) && !dims.noise.iter().any(|p| k.starts_with(p)));
+        for (k, v) in kept.take(MAX_ATTRS) {
+            payload.insert(k.clone(), Value::String(clip(v.clone())));
         }
         Signal {
             app_id: self.app_id.into(),
@@ -126,6 +125,8 @@ struct Dims {
     locale: &'static [&'static str],
     sdk: &'static [&'static str],
     hidden: &'static [&'static str],
+    /// 前缀匹配的键直接丢弃(SDK 每条信号自动附带、几乎无分析价值且占空间的系统参数)
+    noise: &'static [&'static str],
 }
 
 const TD_DIMS: Dims = Dims {
@@ -146,6 +147,17 @@ const TD_DIMS: Dims = Dims {
         "isAppStore", "architecture", "targetEnvironment", "region", "appLanguage", "preferredLanguage",
         "extensionIdentifier",
     ],
+    // 新版 SDK 每条信号附带约 50 个 TelemetryDeck.* 系统参数,约 3 KB。以下几类丢弃;
+    // 保留 RunContext.isTestFlight/isAppStore/isDebug/isSimulator、UserPreference.language/region、
+    // Device.timeZone 等有分析价值的,以及各预设事件(Purchase/Error/Navigation…)自带的参数。
+    noise: &[
+        "TelemetryDeck.Accessibility.", "TelemetryDeck.Calendar.", "TelemetryDeck.Retention.",
+        "TelemetryDeck.Acquisition.firstSessionDate", "TelemetryDeck.AppInfo.versionAndBuildNumber",
+        "TelemetryDeck.Device.screen", "TelemetryDeck.Device.orientation", "TelemetryDeck.Device.systemMajor",
+        "TelemetryDeck.Device.architecture", "TelemetryDeck.Device.platform",
+        "TelemetryDeck.SDK.", "TelemetryDeck.RunContext.targetEnvironment", "TelemetryDeck.RunContext.language",
+        "TelemetryDeck.UserPreference.colorScheme", "TelemetryDeck.UserPreference.layoutDirection",
+    ],
 };
 
 const OTEL_DIMS: Dims = Dims {
@@ -157,6 +169,7 @@ const OTEL_DIMS: Dims = Dims {
     locale: &["locale", "user.locale"],
     sdk: &["telemetry.sdk.name"],
     hidden: &["user.id", "enduser.id", "session.id", "event.name"],
+    noise: &[],
 };
 
 // ---------- TelemetryDeck /v2/ ----------
@@ -208,7 +221,7 @@ async fn td_ingest(State(st): S, key: String, ConnectInfo(peer): ConnectInfo<Soc
     let Ok(raw) = decode_body(&h, body) else { return StatusCode::BAD_REQUEST.into_response() };
     let Ok(sigs) = serde_json::from_slice::<Vec<TdSignal>>(&raw) else { return StatusCode::BAD_REQUEST.into_response() };
     let now = now_ms();
-    let ctx = Ctx { st: &st, app_id: &app_id, place: st.geo.lookup(client_ip(&st, peer, &h)), now };
+    let ctx = Ctx { salt: &st.salt, app_id: &app_id, place: st.geo.lookup(client_ip(&st, peer, &h)), now };
     let batch: Vec<Signal> = sigs.into_iter().take(MAX_BATCH).map(|s| {
         let attrs: Attrs = s.payload.iter().map(|(k, v)| (k.clone(), value_str(v))).collect();
         let ts = sane_ts(s.received_at.as_deref().and_then(parse_time), now);
@@ -385,7 +398,7 @@ pub async fn otlp_logs(State(st): S, ConnectInfo(peer): ConnectInfo<SocketAddr>,
     } else {
         match ExportLogsRequest::decode(&raw[..]) { Ok(r) => from_proto(r), Err(_) => return StatusCode::BAD_REQUEST.into_response() }
     };
-    let ctx = Ctx { st: &st, app_id: &app_id, place: st.geo.lookup(client_ip(&st, peer, &h)), now: now_ms() };
+    let ctx = Ctx { salt: &st.salt, app_id: &app_id, place: st.geo.lookup(client_ip(&st, peer, &h)), now: now_ms() };
     let batch = recs.into_iter().take(MAX_BATCH).map(|r| rec_to_signal(&ctx, r)).collect();
     let resp = enqueue(&st, batch);
     if resp.status() != StatusCode::OK {
@@ -422,5 +435,33 @@ mod tests {
         assert_eq!(recs[0].ts_ns, 1_794_054_896_000_000_000);
         assert_eq!(recs[0].res[0], ("service.version".into(), "1.2".into()));
         assert_eq!(recs[0].attrs[1], ("n".into(), "3".into()));
+    }
+
+    #[test]
+    fn td_drops_sdk_noise_but_keeps_custom_and_preset_params() {
+        let mut attrs: Attrs = vec![
+            ("TelemetryDeck.AppInfo.version".into(), "1.2".into()),
+            ("appVersion".into(), "1.2".into()),
+            ("TelemetryDeck.Calendar.dayOfWeek".into(), "6".into()),
+            ("TelemetryDeck.Device.screenResolutionWidth".into(), "2056".into()),
+            ("TelemetryDeck.SDK.version".into(), "2.14.2".into()),
+            ("TelemetryDeck.RunContext.isTestFlight".into(), "false".into()),
+            ("TelemetryDeck.Purchase.type".into(), "subscription".into()),
+            ("plan".into(), "yearly".into()),
+        ];
+        // 模拟 SDK 的大量系统参数排在前面:自定义参数不能因 50 个上限被挤掉
+        for i in 0..80 {
+            attrs.insert(0, (format!("TelemetryDeck.Calendar.n{i}"), "x".into()));
+        }
+        let ctx = Ctx { salt: "s", app_id: "a", place: Default::default(), now: 0 };
+        let sig = ctx.signal("t".into(), 0, Some("u"), None, &attrs, &vec![], &TD_DIMS);
+        let p: Value = serde_json::from_str(&sig.payload).unwrap();
+        let keys: Vec<&str> = p.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(sig.app_version.as_deref(), Some("1.2"));
+        let mut want = vec!["TelemetryDeck.Purchase.type", "TelemetryDeck.RunContext.isTestFlight", "plan"];
+        want.sort();
+        let mut got = keys.clone();
+        got.sort();
+        assert_eq!(got, want);
     }
 }

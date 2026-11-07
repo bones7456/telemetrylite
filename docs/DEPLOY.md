@@ -1,18 +1,20 @@
-# 部署指南
+# Deployment guide
 
-环境:Linux x86_64 服务器(Debian/Ubuntu + systemd),前面用 nginx 提供 HTTPS。整个服务就是一个静态二进制 + 一个 SQLite 文件。
+English | [简体中文](DEPLOY.zh-CN.md)
+
+Target: a Linux x86_64 or aarch64 server (Debian/Ubuntu + systemd) with nginx in front for HTTPS. The whole service is one static binary plus one SQLite file.
 
 ```
 App ──HTTPS──► nginx :443 ──► telemetrylite 127.0.0.1:8888 ──► SQLite
 ```
 
-## 安装
+## Install
 
-> **USE ON YOUR OWN RISK** —— 安装脚本以 root/sudo 修改系统(用户、systemd、nginx、证书)。请先阅读脚本,详见 README「安装」。
+> **USE ON YOUR OWN RISK** — the install script runs as root/sudo and modifies the system (user, systemd, nginx, certificates). Read the script first; see "Install" in the [README](../README.md).
 
-**前置条件**:Linux(x86_64 / aarch64)服务器,有 root 或 sudo。
+**Prerequisites**: a Linux (x86_64 / aarch64) server with root or sudo.
 
-**最小安装**(下载 → 阅读 → 预演 → 安装):
+**Minimal install** (download → read → preview → install):
 
 ```sh
 curl -fsSL https://github.com/bones7456/telemetrylite/releases/latest/download/install.sh -o install.sh
@@ -21,13 +23,13 @@ sh install.sh --dry-run
 sh install.sh
 ```
 
-最小安装只装二进制和 systemd 服务(监听 `127.0.0.1:8888`),不碰 nginx、不申请证书。此时可以:
+The minimal install only installs the binary and a systemd service (listening on `127.0.0.1:8888`); it does not touch nginx and does not request certificates. From there you can:
 
-- 用 SSH 端口转发先体验:`ssh -L 8888:127.0.0.1:8888 you@server`,再打开 `http://127.0.0.1:8888`;
-- 自己配反代 / Caddy;
-- 或让脚本代劳,见下一节。
+- try it out through SSH port forwarding: `ssh -L 8888:127.0.0.1:8888 you@server`, then open `http://127.0.0.1:8888`;
+- set up your own reverse proxy or Caddy;
+- or let the script do it, see the next section.
 
-**启用 HTTPS(`--domain`)**:让脚本写入 nginx 反代配置,并用 certbot 申请 Let's Encrypt 证书(代你同意其服务条款)。前提:域名已解析到服务器、80 端口可从公网访问、已装好 nginx 与 certbot(脚本不会替你装包):
+**Enable HTTPS (`--domain`)**: the script writes an nginx reverse-proxy config and obtains a Let's Encrypt certificate with certbot (accepting its terms of service on your behalf). Prerequisites: the domain resolves to the server, port 80 is reachable from the internet, and nginx and certbot are installed (the script never installs packages):
 
 ```sh
 sudo apt install -y nginx certbot python3-certbot-nginx     # Debian/Ubuntu
@@ -35,41 +37,41 @@ sh install.sh --dry-run --domain telemetry.example.com
 sh install.sh --domain telemetry.example.com --email me@example.com
 ```
 
-certbot 失败(如域名未解析好)时服务已装好、只是没有 HTTPS,脚本会给出补救命令。
+If certbot fails (for example the domain does not resolve yet), the service is already installed and running, just without HTTPS; the script prints the command to finish the job.
 
-脚本会探测环境并打印部署计划(系统/架构/权限/systemd/端口/反向代理),校验二进制的 SHA256,安装并启动服务,(指定 `--domain` 时)配置 nginx 与证书,最后打印**管理员密码**(仅首次显示,请立即保存)。选项与各探测项的处理方式见 README「安装」。
+The script detects the environment and prints a deployment plan (OS / architecture / privileges / systemd / port / reverse proxy), verifies the binary's SHA256, installs and starts the service, configures nginx and the certificate (when `--domain` is given), and finally prints the **admin password** (shown only on first install — save it right away). The options and how each check is handled are described under "Install" in the [README](../README.md).
 
-**升级**:重新运行同一条命令。数据库自动迁移;已有的 service 文件和 nginx 配置不会被覆盖;重启期间 SDK 会缓存并重试事件;重启后需重新登录管理界面。
+**Upgrade**: re-run the same command. The database is migrated automatically; an existing service file and nginx config are not overwritten; SDKs cache and retry events while the service restarts; you must log in to the admin UI again afterwards.
 
-**卸载**:`sh install.sh --uninstall`(保留 `/var/lib/telemetrylite` 数据)。
+**Uninstall**: `sh install.sh --uninstall` (keeps the `/var/lib/telemetrylite` data).
 
-**从源码部署**(开发者):`./scripts/deploy.sh you@server telemetry.example.com`,在本机交叉编译后上传,服务器端同样调用 `install.sh`。需先 `brew install zig && cargo install cargo-zigbuild --locked && rustup target add x86_64-unknown-linux-musl`(Rust < 1.91 时 cargo-zigbuild 固定 `--version 0.20.1`)。
+**Deploy from source** (developers): `./scripts/deploy.sh you@server telemetry.example.com` cross-compiles locally, uploads, and runs `install.sh` on the server. First run `brew install zig && cargo install cargo-zigbuild --locked && rustup target add x86_64-unknown-linux-musl` (with Rust < 1.91 pin cargo-zigbuild to `--version 0.20.1`).
 
-## 部署后
+## After installing
 
-1. 浏览器打开 `https://telemetry.example.com/`,用管理员密码登录。
-2. 新建 App →「设置」→「签发新 key」,**立即复制保存 key**(只显示一次),页面会给出接入代码。
-3. 验证(把 `<key>` 换成刚签发的):
+1. Open `https://telemetry.example.com/` in a browser and log in with the admin password. The UI language (English / 中文) can be switched in the page header.
+2. Create an app → Settings → "Issue new key", and **copy the key immediately** (it is shown only once); the page shows ready-to-use integration code.
+3. Verify (replace `<key>` with the key you just issued):
 
 ```sh
 curl -i -X POST https://telemetry.example.com/k/<key>/v2/ -H 'content-type: application/json' \
   -d '[{"type":"Test.event","clientUser":"me","sessionID":"s1","isTestMode":"true","payload":{}}]'
 ```
 
-返回 `200`;「事件」页能看到这条(🧪 为测试数据),「概览」切到「测试数据」可见。
+It should return `200`; the event shows up on the Events page (🧪 marks test data), and on Overview after switching to "Test data".
 
-## 接入 App
+## Connecting apps
 
-**TelemetryDeck SDK(Swift)**,key 放在 base URL 路径里:
+**TelemetryDeck SDK (Swift)** — the key goes into the base URL path:
 
 ```swift
 let config = TelemetryDeck.Config(
-    appID: "<管理界面里的 App ID>",
+    appID: "<App ID from the admin UI>",
     baseURL: URL(string: "https://telemetry.example.com/k/<key>/")!)
 TelemetryDeck.initialize(config: config)
 ```
 
-**OpenTelemetry(仅 Logs)**:
+**OpenTelemetry (Logs only)**:
 
 ```
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://telemetry.example.com/v1/logs
@@ -77,56 +79,56 @@ OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <key>
 ```
 
-key 只能写入、不能读取;泄露后在「设置」里吊销并重签即可,立即生效。
+Keys are write-only and cannot read data. If one leaks, revoke it under Settings and issue a new one; revocation takes effect immediately.
 
-## 配置
+## Configuration
 
-用 `sudo systemctl edit telemetrylite` 加 `[Service]` + `Environment=...`,然后 `sudo systemctl restart telemetrylite`。
+Use `sudo systemctl edit telemetrylite` to add `[Service]` + `Environment=...`, then `sudo systemctl restart telemetrylite`.
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Description |
 |---|---|---|
-| `TL_LISTEN` | `127.0.0.1:8888` | 监听地址;改端口需同步改 nginx 的 `proxy_pass` |
-| `TL_DB_PATH` | `/var/lib/telemetrylite/telemetrylite.db` | SQLite 文件 |
-| `TL_ADMIN_PASSWORD` | 首次随机生成 | 设置后每次启动都以它为准;**忘记密码就用它重置** |
-| `TL_GEOIP_AUTO_UPDATE` | `true`(脚本写入) | 自动下载并每月更新 DB-IP City Lite(约 127 MB,需能访问 `download.db-ip.com`)。想关闭设为 `false` |
-| `TL_GEOIP_DB` | 空 | 指定自备 mmdb;都不配则国家/城市为空 |
-| `TL_TRUSTED_PROXY` | 空 | 除回环外额外信任的反代 IP(逗号分隔);nginx 与服务同机无需设置 |
+| `TL_LISTEN` | `127.0.0.1:8888` | Listen address; if you change the port, update nginx's `proxy_pass` too |
+| `TL_DB_PATH` | `/var/lib/telemetrylite/telemetrylite.db` | SQLite file |
+| `TL_ADMIN_PASSWORD` | random on first start | If set, it is applied on every start; **use it to reset a forgotten password** |
+| `TL_GEOIP_AUTO_UPDATE` | `true` (written by the script) | Downloads and monthly refreshes DB-IP City Lite (about 127 MB; needs access to `download.db-ip.com`). Set `false` to disable |
+| `TL_GEOIP_DB` | empty | Use your own mmdb; without it (and without auto update) country/city stay empty |
+| `TL_TRUSTED_PROXY` | empty | Extra trusted reverse-proxy IPs besides loopback (comma-separated); not needed when nginx runs on the same host |
 
-每个 App 的数据保留天数在「设置」页修改(默认 90),后台每小时清理。
+Each app's retention (in days) is set on its Settings page (default 90); expired data is purged hourly.
 
-## 备份
+## Backups
 
-数据全在 `/var/lib/telemetrylite/telemetrylite.db`(WAL 模式,**不要直接 cp**)。在线备份,无需停服:
+All data lives in `/var/lib/telemetrylite/telemetrylite.db` (WAL mode — **do not just `cp` it**). Online backup, no downtime needed:
 
 ```sh
 sudo -u telemetrylite sqlite3 /var/lib/telemetrylite/telemetrylite.db ".backup '/var/lib/telemetrylite/backup.db'"
 ```
 
-可放进 cron 每天执行并同步到别处。恢复:停服务,替换 db 文件(并删除同目录 `-wal`、`-shm`),再启动。`meta` 表里有用户哈希的盐,必须随库一起恢复。
+Put it in a daily cron job and copy the result elsewhere. To restore: stop the service, replace the db file (and delete the `-wal` and `-shm` files next to it), then start it again. The `meta` table holds the salt used for user hashes and must be restored together with the data.
 
-## 排错
+## Troubleshooting
 
-| 现象 | 排查 |
+| Symptom | What to check |
 |---|---|
-| 上报返回 `401` | key 错误/已吊销,或 URL 缺少 `/k/<key>/` |
-| `400` | 请求体不是合法 JSON/protobuf;OTLP 注意 `Content-Type` 与编码一致 |
-| `503` | 写入队列满,SDK 会按 `Retry-After` 重试;持续出现查磁盘 IO |
-| `413` | 请求体超过 2 MB |
-| 没有国家/城市 | 查 `journalctl -u telemetrylite \| grep GeoIP`(下载失败?);或 nginx 没传 `X-Forwarded-For` |
-| 地理位置都是同一处 | nginx 前面还有 CDN,`$remote_addr` 是 CDN 地址,需用 nginx `real_ip` 模块还原真实 IP |
-| 登录后马上掉线 | 用 HTTPS 访问,且 nginx 传了 `X-Forwarded-Proto` |
-| 服务起不来 | `sudo journalctl -u telemetrylite -n 50`;常见:数据目录权限、端口占用 |
+| Reporting returns `401` | Wrong or revoked key, or the URL lacks the `/k/<key>/` prefix |
+| `400` | Body is not valid JSON/protobuf; for OTLP make sure `Content-Type` matches the encoding |
+| `503` | Write queue is full; SDKs retry according to `Retry-After`. If it persists, check disk IO |
+| `413` | Request body larger than 2 MB |
+| No country / city | Check `journalctl -u telemetrylite \| grep GeoIP` (download failed?), or nginx is not passing `X-Forwarded-For` |
+| All locations are the same | A CDN sits in front of nginx, so `$remote_addr` is the CDN's address; restore the real IP with nginx's `real_ip` module |
+| Logged out right after login | Use HTTPS, and make sure nginx sends `X-Forwarded-Proto` |
+| Service will not start | `sudo journalctl -u telemetrylite -n 50`; common causes: data-directory permissions, port already in use |
 
-实时日志:`sudo journalctl -u telemetrylite -f`。
+Live logs: `sudo journalctl -u telemetrylite -f`.
 
-## 手动部署(不用脚本)
+## Manual deployment (without the script)
 
-`scripts/install.sh` 就是完整的手动步骤,可直接阅读照做。
+`scripts/install.sh` is the complete list of manual steps; read it and follow along.
 
-## 安全清单
+## Security checklist
 
-- [ ] 服务只监听 `127.0.0.1`,公网只开放 80/443
-- [ ] 全站 HTTPS;管理员密码足够长(脚本已对 `/api/login` 限速)
-- [ ] 定期备份
-- [ ] 隐私政策里如实说明:不存 IP、用户标识为哈希、地理位置精确到城市
-- [ ] 保留 DB-IP 署名(管理界面页脚已带)
+- [ ] The service listens on `127.0.0.1` only; only 80/443 are open to the internet
+- [ ] HTTPS everywhere; a long admin password (the script already rate-limits `/api/login`)
+- [ ] Regular backups
+- [ ] Say so in your privacy policy: IPs are not stored, user identifiers are hashed, location is accurate to city level
+- [ ] Keep the DB-IP attribution (already in the admin UI footer)

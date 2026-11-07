@@ -225,7 +225,8 @@ async fn key_revoke(State(st): S, Path(id): Path<String>) -> R {
 /// 维度名 → SQL 表达式(白名单,绝不拼接用户输入)。
 const DIMS: [(&str, &str); 6] = [
     ("app_version", "app_version"),
-    ("os_version", "trim(coalesce(os,'') || ' ' || coalesce(os_version,''))"),
+    // SDK 的 systemVersion 已形如 "iOS 18.2.0";只有纯数字版本才补上系统名
+    ("os_version", "CASE WHEN coalesce(os_version,'') = '' THEN os WHEN os_version GLOB '[0-9]*' THEN trim(coalesce(os,'') || ' ' || os_version) ELSE os_version END"),
     ("device_model", "device_model"),
     ("locale", "locale"),
     ("country", "country"),
@@ -237,12 +238,14 @@ async fn stats(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<Str
     let test = i64::from(p.get("test").is_some_and(|t| t == "1"));
     let since = now_ms() - days * 86_400_000;
     let fmt = if days <= 1 { "%Y-%m-%d %H:00" } else { "%Y-%m-%d" };
+    // 图表按浏览器本地时区分桶;tz 为相对 UTC 的分钟数
+    let tz_sec = p.get("tz").and_then(|t| t.parse::<i64>().ok()).unwrap_or(0).clamp(-840, 840) * 60;
     let out = with_db(&st, move |c| {
         let w = "FROM signal WHERE app_id=?1 AND ts>=?2 AND is_test=?3";
         let args: &[&dyn ToSql] = &[&id, &since, &test];
         let totals = q(c, &format!("SELECT COUNT(*) events, COUNT(DISTINCT user_hash) users, COUNT(DISTINCT session_id) sessions {w}"), args)?;
-        let series = q(c, &format!("SELECT strftime(?4, ts/1000, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY t ORDER BY t"),
-            &[&id, &since, &test, &fmt])?;
+        let series = q(c, &format!("SELECT strftime(?4, ts/1000 + ?5, 'unixepoch') t, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY t ORDER BY t"),
+            &[&id, &since, &test, &fmt, &tz_sec])?;
         let top = q(c, &format!("SELECT type, COUNT(*) events, COUNT(DISTINCT user_hash) users {w} GROUP BY type ORDER BY events DESC LIMIT 20"), args)?;
         let mut dims = Map::new();
         for (name, expr) in DIMS {
