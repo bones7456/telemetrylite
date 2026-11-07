@@ -147,7 +147,7 @@ if [ -n "$BIN" ]; then
   [ -f "$BIN" ] || die "找不到 $BIN"
   cp "$BIN" "$TMP/bin"
 else
-  case $REPO in __REPO__) die "未设置仓库名:请从 Release 下载本脚本,或设置环境变量 TL_REPO=owner/repo";; esac
+  case $REPO in *__REPO*) die "未设置仓库名:请从 Release 下载本脚本,或设置环境变量 TL_REPO=owner/repo";; esac
   if [ "$VERSION" = latest ]; then base="https://github.com/$REPO/releases/latest/download"
   else base="https://github.com/$REPO/releases/download/$VERSION"; fi
   asset="telemetrylite-$ARCH-linux"
