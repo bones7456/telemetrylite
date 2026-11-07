@@ -117,7 +117,7 @@ Verified against the Swift SDK source: the SDK posts to `{baseURL}/v2/` (or `/v2
 - Size: about 127 MB unpacked. To save space point `TL_GEOIP_DB` at the Country Lite file instead; the code reads whichever of country/region/city exists.
 - Default: without `TL_GEOIP_DB` or auto update, no lookup happens and the three columns are NULL.
 - Auto update (`TL_GEOIP_AUTO_UPDATE=true`): download on start if missing, then check daily and refresh when older than 30 days. The file is downloaded to a temp name, verified to open, atomically renamed and hot-reloaded. Failures are logged as warnings and never affect ingest.
-- Client IP: the TCP peer, except that `X-Forwarded-For` / `X-Real-IP` are trusted only when the peer is loopback or in `TL_TRUSTED_PROXY`. Private and loopback addresses are skipped. Location attributes sent by clients are ignored.
+- Client IP: the TCP peer, except that `X-Forwarded-For` / `X-Real-IP` are trusted only when the peer is loopback or in `TL_TRUSTED_PROXY`. Private and loopback addresses are skipped. Location attributes sent by clients are ignored. DB-IP city names often carry a district suffix (`San Francisco (South Beach)`); it is stripped on ingest, and the city breakdown strips it for older rows too, so one city is one entry.
 - Attribution: the admin UI footer and the README credit DB-IP.com.
 
 ## 5. Keys and authentication
@@ -132,7 +132,7 @@ One HTML file, plain JavaScript, inline SVG charts, light/dark by system setting
 
 - **Login**, **apps** list and creation.
 - **Header**: an app switcher, and three headline numbers over the last 90 days of live data: users, most used SDK, errors.
-- **Overview**: range (24 h / 7 d / 30 d / 90 d), live vs test data (a banner says how many events of the other kind are hidden, with a one-click switch), tiles (users in the last hour, active users, events, sessions), active-users line chart and events bar chart, **weekly retention cohorts** (last 8 weeks, weeks start on Monday), **app versions over time** (share of users, top 8 versions), top events with their user counts, and breakdowns by app version, OS version, device model, locale, country and city. Charts have grid lines and hover tooltips; missing time buckets are filled with zero and bucketed in the browser's time zone.
+- **Overview**: range (24 h / 7 d / 30 d / 90 d), live vs test data (a banner says how many events of the other kind are hidden, with a one-click switch), tiles (users in the last hour, active users, events, sessions), active-users line chart and events bar chart, **weekly retention cohorts** (last 8 weeks, weeks start on Monday), **app versions over time** (share of users, top 8 versions), top events with their user counts, and breakdowns by app version, OS version, device model, locale, country (shown by name in the UI language, via the browser's `Intl.DisplayNames`) and city. Charts have grid lines and hover tooltips; missing time buckets are filled with zero and bucketed in the browser's time zone.
 - **Users**: new users per day and new vs returning users. A user is new on the day their first event appears in the stored data (so after a retention purge, long-gone users can show up as new again).
 - **Event types**: every event type with users, events and last-seen time; a name opens the Events page filtered to it.
 - **Errors**: trend and a table grouped by error id and category, from the SDK's preset `TelemetryDeck.Error.occurred` event.

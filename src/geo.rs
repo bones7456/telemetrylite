@@ -46,13 +46,21 @@ impl Geo {
         (
             s(c.country.iso_code),
             s(c.subdivisions.first().and_then(|d| d.names.english)),
-            s(c.city.names.english),
+            s(c.city.names.english).map(|c| clean_city(&c)),
         )
     }
 
     fn age(&self) -> Option<Duration> {
         let m = std::fs::metadata(self.path.as_ref()?).ok()?.modified().ok()?;
         SystemTime::now().duration_since(m).ok()
+    }
+}
+
+/// DB-IP 的城市名常带区县后缀,如 "San Francisco (South Beach)";去掉它,同一座城市才会合并成一项。
+pub fn clean_city(name: &str) -> String {
+    match name.split_once(" (") {
+        Some((head, _)) if !head.trim().is_empty() => head.trim().to_string(),
+        _ => name.to_string(),
     }
 }
 
@@ -98,4 +106,19 @@ fn fetch_gz(url: &str, dest: &Path) -> io::Result<()> {
     // 先确认能打开再替换
     Reader::open_readfile(&tmp).map_err(io::Error::other)?;
     std::fs::rename(&tmp, dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_city;
+
+    #[test]
+    fn strips_district_suffix() {
+        assert_eq!(clean_city("San Francisco (South Beach)"), "San Francisco");
+        assert_eq!(clean_city("Amsterdam (Amsterdam-Centrum)"), "Amsterdam");
+        assert_eq!(clean_city("Jinrongjie (Xicheng District)"), "Jinrongjie");
+        assert_eq!(clean_city("Jinan"), "Jinan");
+        assert_eq!(clean_city("(Odd)"), "(Odd)");
+        assert_eq!(clean_city(" (x)"), " (x)");
+    }
 }

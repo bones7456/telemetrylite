@@ -154,6 +154,13 @@ const api = async (method, path, body) => {
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : String(n);
 const loc = () => lang === 'zh' ? 'zh-CN' : 'en-US';
 const when = ts => new Date(ts).toLocaleString(loc());
+// ISO country code -> name in the UI language (browser built-in); falls back to the code.
+const regionNames = {};
+const countryName = c => {
+  if (!c) return c;
+  try { return ((regionNames[lang] ??= new Intl.DisplayNames([loc()], { type: 'region' })).of(c)) || c; } catch { return c; }
+};
+const cityName = c => c && c.replace(/ \(.*\)$/, '');   // older rows may still carry a district suffix
 // Values that come from clients (versions, labels …) must be escaped before they go into SVG/HTML strings.
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -223,10 +230,10 @@ function stacked(buckets, defs, percent) {
   return box;
 }
 
-const bars = (rows, key, sub) => {
+const bars = (rows, key, sub, label) => {
   const max = Math.max(1, ...rows.map(r => r[key]));
   return rows.length ? rows.map(r => h('div', { class: 'bar' },
-    h('i', { style: `width:${r[key] / max * 100}%` }), h('span', {}, r.v === '' ? t('unknown') : r.v ?? r.type),
+    h('i', { style: `width:${r[key] / max * 100}%` }), h('span', {}, r.v === '' ? t('unknown') : label ? label(r.v ?? r.type) : r.v ?? r.type),
     h('span', {}, fmt(r[key]), sub ? sub(r) : ''))) : h('div', { class: 'mute' }, t('noData'));
 };
 
@@ -364,7 +371,7 @@ async function overviewView(app) {
       h('div', { class: 'two' }, card(t('activeUsers'), chart(fillSeries(s.series, q.days), 'users')), card(t('events'), chart(fillSeries(s.series, q.days), 'events', true))),
       h('div', { class: 'two' }, card(t('retentionTitle'), retentionChart(ret)), card(t('versionsTitle'), versionsChart(ver, q.days))),
       card(t('topEvents'), bars(s.top, 'events', r => h('span', { class: 'mute' }, ' · ' + t('nUsers', fmt(r.users))))),
-      h('div', { class: 'two' }, dims.map(k => card(t('dim_' + k) + t('usersSuffix'), bars(s.dims[k], 'users')))),
+      h('div', { class: 'two' }, dims.map(k => card(t('dim_' + k) + t('usersSuffix'), bars(s.dims[k], 'users', null, k === 'country' ? countryName : undefined)))),
     ];
   });
 }
@@ -435,7 +442,7 @@ async function eventsView(app) {
     rows.push(...page);
     for (const r of page) tbody.append(h('tr', {},
       h('td', {}, when(r.ts), r.is_test ? ' 🧪' : ''), h('td', {}, r.type),
-      h('td', { class: 'mute' }, [r.app_version, osLabel(r), r.device_model, r.country && [r.country, r.city].filter(Boolean).join('/')].filter(Boolean).join(' · ')),
+      h('td', { class: 'mute' }, [r.app_version, osLabel(r), r.device_model, r.country && [countryName(r.country), cityName(r.city)].filter(Boolean).join(' / ')].filter(Boolean).join(' · ')),
       h('td', { class: 'm' }, r.payload === '{}' ? '' : params(r.payload))));
     more.style.display = page.length < 100 ? 'none' : '';
   };

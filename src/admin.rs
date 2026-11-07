@@ -236,7 +236,8 @@ const DIMS: [(&str, &str); 6] = [
     ("device_model", "device_model"),
     ("locale", "locale"),
     ("country", "country"),
-    ("city", "city"),
+    // 旧数据里的城市名可能带区县后缀("San Francisco (South Beach)"),分组时一并去掉
+    ("city", "CASE WHEN instr(city, ' (') > 1 THEN substr(city, 1, instr(city, ' (') - 1) ELSE city END"),
 ];
 
 /// SDK 预设错误事件的类型名。
