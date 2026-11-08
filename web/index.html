@@ -15,6 +15,9 @@ header b{font-size:16px}header .sp{flex:1}
 header select{padding:2px 6px;font-size:13px}
 .row .sp{flex:1}
 main{max-width:1100px;margin:0 auto;padding:24px 16px}
+main:has(.wide){max-width:min(1800px,100%)}
+.kvs{display:flex;flex-wrap:wrap;gap:0 16px}.kvs>div{white-space:nowrap}.kvs>details{flex-basis:100%}
+td.nw{white-space:nowrap}
 footer{text-align:center;color:var(--mute);font-size:12px;padding:24px}
 h2{margin:0 0 16px;font-size:20px}h3{margin:0 0 12px;font-size:14px;color:var(--mute);font-weight:600}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
@@ -578,7 +581,7 @@ function params(json) {
   const custom = [], sys = [];
   for (const kv of Object.entries(o)) (kv[0].startsWith('TelemetryDeck.') ? sys : custom).push(kv);
   const line = ([k, v]) => h('div', {}, h('span', { class: 'mute' }, k + ': '), v);
-  return h('div', {}, custom.map(line),
+  return h('div', { class: 'kvs' }, custom.map(line),
     sys.length ? h('details', {}, h('summary', { class: 'mute' }, t('sysParams', sys.length)), sys.map(([k, v]) => line([k.slice(14), v]))) : null);
 }
 
@@ -594,7 +597,7 @@ async function eventsView(app) {
     if (reset) { rows = []; tbody.replaceChildren(); }
     rows.push(...page);
     for (const r of page) tbody.append(h('tr', {},
-      h('td', {}, when(r.ts), r.is_test ? ' 🧪' : ''), h('td', {}, r.type),
+      h('td', { class: 'nw' }, when(r.ts), r.is_test ? ' 🧪' : ''), h('td', { class: 'nw' }, r.type),
       h('td', { class: 'mute' }, [r.app_version, osLabel(r), r.device_model, r.country && [countryName(r.country), cityName(r.city)].filter(Boolean).join(' / ')].filter(Boolean).join(' · ')),
       h('td', { class: 'm' }, r.payload === '{}' ? '' : params(r.payload))));
     more.style.display = page.length < 100 ? 'none' : '';
@@ -605,7 +608,7 @@ async function eventsView(app) {
   type.addEventListener('keydown', e => { if (e.key === 'Enter') { kind = type.value.trim(); load(true, true); } });
   more.addEventListener('click', () => load(false));
   return appShell(app, 'events', h('div', { class: 'row' }, type, platformSelect(app, () => load(true, true)), h('span', { class: 'mute' }, t('filterHint')), h('span', { class: 'sp' }), ...controls),
-    h('div', { class: 'card', style: 'overflow:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['colTime', 'colEvent', 'colEnv', 'colParams'].map(x => h('th', {}, t(x))))), tbody)), more);
+    h('div', { class: 'card wide', style: 'overflow:auto' }, h('table', {}, h('thead', {}, h('tr', {}, ['colTime', 'colEvent', 'colEnv', 'colParams'].map(x => h('th', {}, t(x))))), tbody)), more);
 }
 
 // Prompt for AI coding agents, filled with this server's URL, the app id and (once issued) the write key.
