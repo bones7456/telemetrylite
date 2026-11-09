@@ -178,6 +178,26 @@ elif [ -n "$BIN" ] && [ -f "$BIN" ]; then WANT=$(sha_of "$BIN"); fi
 UPTODATE=0
 if [ "$MODE" = upgrade ] && [ "$FORCE" = 0 ] && [ "$REWRITE" = 0 ] && [ -n "$CUR" ] && [ "$WANT" = "$CUR" ]; then UPTODATE=1; fi
 short() { printf '%s' "$1" | cut -c1-8; }
+# Version a telemetrylite binary reports, or "unknown". Binaries before 0.1.7 do not know --version and would start
+# a server instead, so run it isolated (own port, own database) with a timeout.
+ver_of() {
+  command -v timeout >/dev/null 2>&1 || { echo unknown; return; }
+  v=$(TL_LISTEN=127.0.0.1:0 TL_DB_PATH="$TMP/probe.db" TL_GEOIP_AUTO_UPDATE=false timeout 3 "$1" --version 2>/dev/null </dev/null | awk '/^telemetrylite /{print $2; exit}')
+  echo "${v:-unknown}"
+}
+# Download the release binary and verify it against SHA256SUMS (once; the result is $TMP/bin).
+fetch_bin() {
+  [ -f "$TMP/bin" ] && return 0
+  case $REPO in *__REPO*) die "repository name not set: download this script from a Release, or set TL_REPO=owner/repo" "未设置仓库名:请从 Release 下载本脚本,或设置环境变量 TL_REPO=owner/repo";; esac
+  say "Downloading $ASSET ..." "下载 $ASSET …"
+  dl "$BASE/$ASSET" "$TMP/bin" || die "download failed: $BASE/$ASSET" "下载失败: $BASE/$ASSET"
+  dl "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" || die "failed to download SHA256SUMS" "下载 SHA256SUMS 失败"
+  want=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
+  got=$(sha_of "$TMP/bin")
+  [ -n "$got" ] || die "sha256sum is missing, cannot verify the download" "缺少 sha256sum,无法校验下载内容"
+  [ -n "$want" ] && [ "$want" = "$got" ] || { rm -f "$TMP/bin"; die "SHA256 verification failed, aborting" "SHA256 校验失败,已中止"; }
+  say "✔ SHA256 verified" "✔ SHA256 校验通过"
+}
 
 # The service file this installer would write (used for installs, --rewrite-unit and drift detection).
 gen_unit() {
@@ -215,7 +235,9 @@ if [ "$MODE" = upgrade ]; then
     say "Already up to date: the installed binary ($(short "$CUR")) matches the release. Nothing to do (use --force to reinstall)." "已是最新版本:已安装的二进制($(short "$CUR"))与发布版一致,无需操作(如需重新安装请加 --force)。"
     exit 0
   elif [ -n "$WANT" ] && [ -n "$CUR" ]; then
-    say "Update: installed $(short "$CUR") -> $(short "$WANT")" "更新:已安装 $(short "$CUR") -> $(short "$WANT")"
+    if [ -n "$BIN" ]; then NEWV=$(ver_of "$BIN"); else fetch_bin; chmod +x "$TMP/bin"; NEWV=$(ver_of "$TMP/bin"); fi
+    OLDV=$(ver_of "$BIN_PATH")
+    say "Update: installed $OLDV ($(short "$CUR")) -> new $NEWV ($(short "$WANT"))" "更新:已安装 $OLDV ($(short "$CUR")) -> 新版本 $NEWV ($(short "$WANT"))"
   elif [ -z "$BIN" ]; then
     say "Could not check the latest version; the release will be downloaded." "无法检查最新版本,将直接下载发布版。"
   fi
@@ -250,15 +272,7 @@ if [ -n "$BIN" ]; then
   [ -f "$BIN" ] || die "cannot find $BIN" "找不到 $BIN"
   cp "$BIN" "$TMP/bin"
 else
-  case $REPO in *__REPO*) die "repository name not set: download this script from a Release, or set TL_REPO=owner/repo" "未设置仓库名:请从 Release 下载本脚本,或设置环境变量 TL_REPO=owner/repo";; esac
-  say "Downloading $ASSET ..." "下载 $ASSET …"
-  dl "$BASE/$ASSET" "$TMP/bin" || die "download failed: $BASE/$ASSET" "下载失败: $BASE/$ASSET"
-  dl "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" || die "failed to download SHA256SUMS" "下载 SHA256SUMS 失败"
-  want=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
-  got=$(sha_of "$TMP/bin")
-  [ -n "$got" ] || die "sha256sum is missing, cannot verify the download" "缺少 sha256sum,无法校验下载内容"
-  [ -n "$want" ] && [ "$want" = "$got" ] || die "SHA256 verification failed, aborting" "SHA256 校验失败,已中止"
-  say "✔ SHA256 verified" "✔ SHA256 校验通过"
+  fetch_bin
 fi
 chmod +x "$TMP/bin"
 
