@@ -1,5 +1,6 @@
 mod admin;
 mod db;
+mod read;
 mod geo;
 mod i18n;
 mod ingest;
@@ -15,10 +16,21 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+#[derive(Clone)]
+pub struct KeyInfo {
+    pub app_id: String,
+    /// true = read key (`tlr_`, analysis only); false = write key (`tl_`, ingest only)
+    pub read: bool,
+}
+
 pub struct AppState {
     pub tx: mpsc::Sender<Vec<db::Signal>>,
-    /// 写入 key 的 SHA-256(hex) -> app_id,热路径只查内存
-    pub keys: RwLock<HashMap<String, String>>,
+    /// key 的 SHA-256(hex) -> (app_id, 是否读 key),热路径只查内存
+    pub keys: RwLock<HashMap<String, KeyInfo>>,
+    pub db_path: String,
+    /// 读 API:每个 key 的 (窗口起点 ms, 本窗口请求数),以及同时执行的查询数上限
+    pub read_rate: Mutex<HashMap<String, (i64, u32)>>,
+    pub read_slots: tokio::sync::Semaphore,
     /// 管理端/查询用连接(写入走独立线程)
     pub db: Mutex<Connection>,
     pub geo: Arc<geo::Geo>,
@@ -62,9 +74,9 @@ async fn main() {
     if auto_update {
         tokio::spawn(geo::auto_update(geo.clone()));
     }
-    tokio::spawn(retention_job(db_path));
+    tokio::spawn(retention_job(db_path.clone()));
 
-    let state = Arc::new(AppState { tx, keys: RwLock::new(keys), db: Mutex::new(conn), geo, trusted, salt, sessions: Mutex::new(HashMap::new()) });
+    let state = Arc::new(AppState { tx, keys: RwLock::new(keys), db_path, read_rate: Mutex::new(HashMap::new()), read_slots: tokio::sync::Semaphore::new(4), db: Mutex::new(conn), geo, trusted, salt, sessions: Mutex::new(HashMap::new()) });
 
     // the page footer shows the running version
     let index = Arc::new(include_str!("../web/index.html").replace("__VERSION__", env!("CARGO_PKG_VERSION")));
@@ -78,6 +90,7 @@ async fn main() {
         .route("/k/{key}/v1/logs", post(ingest::otlp_logs))
         .route("/v1/metrics", post(ingest::otlp_ignore))
         .route("/v1/traces", post(ingest::otlp_ignore))
+        .merge(read::router(state.clone()))
         .merge(admin::router(state.clone()))
         .layer(DefaultBodyLimit::max(2 << 20))
         .with_state(state.clone());

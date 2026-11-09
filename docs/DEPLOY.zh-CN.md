@@ -81,7 +81,7 @@ OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <key>
 ```
 
-key 只能写入、不能读取;泄露后在「设置」里吊销并重签即可,立即生效。
+写入 key(`tl_…`)只能写入、不能读取。读取 key(`tlr_…`,设置 →「读取 API key」)只读、绑定一个 App,供分析工具和 AI agent 使用,见 [READ_API.zh-CN.md](READ_API.zh-CN.md)。key 泄露后在「设置」里吊销并重签即可,立即生效。
 
 ## 配置
 

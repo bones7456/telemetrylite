@@ -1,6 +1,6 @@
 //! 管理端 JSON API(/api/*):登录会话、App 与写入 key 管理、统计查询。
 
-use crate::{AppState, db::now_ms, ingest::sha256_hex};
+use crate::{AppState, KeyInfo, db::now_ms, ingest::sha256_hex};
 use argon2::{Argon2, password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash}};
 use axum::{
     Json, Router,
@@ -53,7 +53,7 @@ async fn with_db<T: Send + 'static>(st: &Arc<AppState>, f: impl FnOnce(&Connecti
 }
 
 /// 查询结果直接转成 JSON 对象数组。
-fn q(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Vec<Value>> {
+pub(crate) fn q(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Vec<Value>> {
     let mut st = conn.prepare_cached(sql)?;
     let names: Vec<String> = st.column_names().map(String::from).collect();
     st.query_map(p, |r| {
@@ -71,9 +71,9 @@ fn q(conn: &Connection, sql: &str, p: &[&dyn ToSql]) -> rusqlite::Result<Vec<Val
     .collect()
 }
 
-pub fn load_keys(conn: &Connection) -> rusqlite::Result<HashMap<String, String>> {
-    let mut st = conn.prepare("SELECT key_hash, app_id FROM api_key WHERE revoked_at IS NULL")?;
-    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+pub fn load_keys(conn: &Connection) -> rusqlite::Result<HashMap<String, KeyInfo>> {
+    let mut st = conn.prepare("SELECT key_hash, app_id, kind FROM api_key WHERE revoked_at IS NULL")?;
+    st.query_map([], |r| Ok((r.get(0)?, KeyInfo { app_id: r.get(1)?, read: r.get::<_, String>(2)? == "read" })))?.collect()
 }
 
 async fn refresh_keys(st: &Arc<AppState>) -> Result<(), E> {
@@ -201,23 +201,27 @@ async fn app_delete(State(st): S, Path(id): Path<String>) -> R {
 
 async fn keys_list(State(st): S, Path(id): Path<String>) -> R {
     let rows = with_db(&st, move |c| q(c,
-        "SELECT id, label, prefix, created_at, revoked_at FROM api_key WHERE app_id=? ORDER BY created_at DESC", &[&id])).await?;
+        "SELECT id, label, prefix, kind, created_at, revoked_at FROM api_key WHERE app_id=? ORDER BY created_at DESC", &[&id])).await?;
     Ok(Json(Value::Array(rows)))
 }
 
 #[derive(Deserialize)]
 struct KeyBody {
     label: Option<String>,
+    /// "write" (default) or "read"
+    kind: Option<String>,
 }
 
 async fn key_create(State(st): S, Path(app_id): Path<String>, Json(b): Json<KeyBody>) -> R {
     // The name is required, so every key can be told apart in the list.
     let label = b.label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty() && l.chars().count() <= 100).ok_or(E(StatusCode::BAD_REQUEST))?;
-    let key = format!("tl_{}", URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()));
+    let kind = match b.kind.as_deref() { None | Some("write") => "write", Some("read") => "read", _ => return Err(E(StatusCode::BAD_REQUEST)) };
+    // Read keys get their own prefix so they can never be mistaken for write keys.
+    let key = format!("{}{}", if kind == "read" { "tlr_" } else { "tl_" }, URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()));
     let (id, hash, prefix) = (uuid::Uuid::new_v4().to_string(), sha256_hex(&key), key[..10].to_string());
     with_db(&st, move |c| c.execute(
-        "INSERT INTO api_key(id,app_id,label,prefix,key_hash,created_at) VALUES(?,?,?,?,?,?)",
-        rusqlite::params![id, app_id, label, prefix, hash, now_ms()])).await?;
+        "INSERT INTO api_key(id,app_id,label,prefix,key_hash,created_at,kind) VALUES(?,?,?,?,?,?,?)",
+        rusqlite::params![id, app_id, label, prefix, hash, now_ms(), kind])).await?;
     refresh_keys(&st).await?;
     Ok(Json(json!({ "key": key })))
 }
@@ -231,7 +235,7 @@ async fn key_revoke(State(st): S, Path(id): Path<String>) -> R {
 // ---------- 查询 ----------
 
 /// 维度名 → SQL 表达式(白名单,绝不拼接用户输入)。
-const DIMS: [(&str, &str); 6] = [
+pub(crate) const DIMS: [(&str, &str); 6] = [
     ("app_version", "app_version"),
     // SDK 的 systemVersion 已形如 "iOS 18.2.0";只有纯数字版本才补上系统名
     ("os_version", "CASE WHEN coalesce(os_version,'') = '' THEN os WHEN os_version GLOB '[0-9]*' THEN trim(coalesce(os,'') || ' ' || os_version) ELSE os_version END"),
@@ -243,7 +247,7 @@ const DIMS: [(&str, &str); 6] = [
 ];
 
 /// SDK 预设错误事件的类型名。
-const ERR_TYPE: &str = "TelemetryDeck.Error.occurred";
+pub(crate) const ERR_TYPE: &str = "TelemetryDeck.Error.occurred";
 
 /// 统一解析查询窗口:`days`(时间范围)、`test`(0 正式 / 1 测试)、`tz`(浏览器相对 UTC 的分钟数,图表按本地时区分桶)。
 struct Win {
@@ -342,22 +346,27 @@ async fn users(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<Str
 
 /// 按周的留存队列:最近 8 个周,每个队列在之后各周仍活跃的用户数。周从周一起算(按浏览器时区)。
 async fn retention(State(st): S, Path(id): Path<String>, Query(p): Query<HashMap<String, String>>) -> R {
+    let Win { test, tz_sec, os, .. } = win(&p);
+    Ok(Json(with_db(&st, move |c| retention_query(c, &id, test, tz_sec, &os)).await?))
+}
+
+/// Shared with the read API (`/r/v1/overview`).
+pub(crate) fn retention_query(c: &Connection, id: &str, test: i64, tz_sec: i64, os: &Option<String>) -> rusqlite::Result<Value> {
     const WEEK: i64 = 7 * 86_400_000;
     const MON: i64 = 3 * 86_400_000; // unix 纪元是周四,偏移 3 天后按周一分周
-    let Win { test, tz_sec, os, .. } = win(&p);
     let tz = tz_sec * 1000;
     let cur = (now_ms() + tz + MON) / WEEK;
     let first_cohort = cur - 7;
     let active_since = now_ms() - 9 * WEEK;
-    let rows = with_db(&st, move |c| q(c,
+    let rows = q(c,
         "WITH f AS (SELECT user_hash, MIN(ts) first_ts FROM signal WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL AND (?8 IS NULL OR os = ?8) GROUP BY user_hash),
               a AS (SELECT DISTINCT user_hash, (ts + ?3 + ?6) / ?7 AS wk FROM signal
                     WHERE app_id=?1 AND is_test=?2 AND user_hash IS NOT NULL AND ts >= ?4 AND (?8 IS NULL OR os = ?8)),
               j AS (SELECT (f.first_ts + ?3 + ?6) / ?7 AS cohort, a.wk AS wk FROM f JOIN a ON a.user_hash = f.user_hash)
          SELECT cohort, wk - cohort AS n, COUNT(*) users FROM j
          WHERE cohort >= ?5 AND wk >= cohort GROUP BY cohort, n ORDER BY cohort, n",
-        &[&id, &test, &tz, &active_since, &first_cohort, &MON, &WEEK, &os])).await?;
-    Ok(Json(json!({ "rows": rows, "week_ms": WEEK, "mon_ms": MON })))
+        &[&id, &test, &tz, &active_since, &first_cohort, &MON, &WEEK, &os])?;
+    Ok(json!({ "rows": rows, "week_ms": WEEK, "mon_ms": MON }))
 }
 
 /// 各 App 版本的用户数随时间变化(客户端取前 8 个版本画堆叠图)。

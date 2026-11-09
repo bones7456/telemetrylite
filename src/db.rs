@@ -35,10 +35,10 @@ pub fn open(path: &str) -> rusqlite::Result<Connection> {
 }
 
 /// Database schema version, stored in `PRAGMA user_version`.
-/// Version 1 is the schema of every release so far. To change the schema, bump this and append a
+/// Version 1 is the schema of every release up to 0.1.8; version 2 adds `api_key.kind` ('write' or 'read'). To change the schema, bump this and append a
 /// step to `MIGRATIONS` (step N upgrades version N to N+1); existing databases are migrated on start.
-const SCHEMA_VERSION: i64 = 1;
-const MIGRATIONS: &[&str] = &[];
+const SCHEMA_VERSION: i64 = 2;
+const MIGRATIONS: &[&str] = &["ALTER TABLE api_key ADD COLUMN kind TEXT NOT NULL DEFAULT 'write'"];
 
 /// Creates missing tables and applies pending migrations. Refuses a database written by a newer
 /// version, so an older binary (e.g. after a rollback) never works on a schema it does not know.
@@ -178,6 +178,17 @@ mod tests {
         assert_eq!(version(&c), SCHEMA_VERSION);
         let n: i64 = c.query_row("SELECT COUNT(*) FROM app", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn migration_adds_key_kind_and_old_keys_stay_write_keys() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute("INSERT INTO app(id,name,created_at) VALUES('a','n',1)", []).unwrap();
+        c.execute("INSERT INTO api_key(id,app_id,label,prefix,key_hash,created_at) VALUES('k','a','l','tl_x','h',1)", []).unwrap();
+        init(&c).unwrap();
+        let kind: String = c.query_row("SELECT kind FROM api_key WHERE id='k'", [], |r| r.get(0)).unwrap();
+        assert_eq!(kind, "write");
     }
 
     #[test]

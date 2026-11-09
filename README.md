@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A lightweight event-collection server: a single Rust binary plus SQLite. It accepts events from the **TelemetryDeck SDKs** and from **OTLP/HTTP Logs**, and ships with an admin UI and write-only API key management. The UI is available in English and Chinese.
+A lightweight event-collection server: a single Rust binary plus SQLite. It accepts events from the **TelemetryDeck SDKs** and from **OTLP/HTTP Logs**, and ships with an admin UI, write-only API keys for apps and read-only keys for analysis. The UI is available in English and Chinese.
 
 > **Integration by AI, in one paste.** The admin UI generates a ready-made prompt with your server URL, app id and write key already filled in. Copy it into Claude Code, Codex or Cursor, and your coding agent adds the SDK, points it at your server and verifies the connection. No docs to read, no snippets to adapt. → [How it works](#connecting-apps)
 
@@ -10,6 +10,7 @@ A lightweight event-collection server: a single Rust binary plus SQLite. It acce
 - Never stores IP addresses; optional GeoIP (DB-IP City Lite) resolves country / region / city
 - Admin UI: overview (active users and events, weekly retention cohorts, app versions over time, top events, breakdowns by app version / OS / device / locale / country / city), new vs returning users, event types, errors, event browser, API key management; a hint when test-mode events are hidden; manual refresh (default) or optional auto refresh that only re-fetches data
 - **One app, several platforms**: iOS and Android (and macOS, watchOS, …) can share one app and key; a platform filter (taken from the SDK's operating-system parameter) narrows every page to one platform
+- **Read API for agents**: a per-app read-only key and a self-describing JSON API (`/r/v1`), so Claude, Codex or a script can analyse your data without opening the page → [docs/READ_API.md](docs/READ_API.md)
 - **AI-assisted integration**: a copy-and-paste prompt for your coding agent, generated per app with everything filled in (English and Chinese)
 - Design notes: [DESIGN.md](DESIGN.md)
 
@@ -120,6 +121,10 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <key>
 ```
 
 LogRecord mapping: `event_name` (or the `event.name` attribute, or the body) → event name; `user.id` / `enduser.id` → anonymous user (salted and hashed before storing); `session.id` → session; resource attributes `service.version`, `os.*`, `device.model.*` → dimension columns; all other attributes go into the payload. Metrics and traces are accepted and discarded.
+
+## Analysing data with an AI agent
+
+Issue a **read key** (`tlr_…`, read-only, bound to one app) under Settings → "Read API keys", press "Copy prompt" in "Analyze with an AI agent", paste it into Claude Code, Codex or any agent that can run `curl`, and add your question. The agent starts at `GET /r/v1/`, which describes the app's data and every endpoint, then uses `/r/v1/overview`, `/r/v1/query` and `/r/v1/events`. Details: **[docs/READ_API.md](docs/READ_API.md)**.
 
 ## Data and privacy
 

@@ -30,7 +30,11 @@ pub fn sha256_hex(s: &str) -> String {
 // ---------- 鉴权 / 公共 ----------
 
 fn app_for_key(st: &AppState, key: &str) -> Result<String, StatusCode> {
-    st.keys.read().unwrap().get(&sha256_hex(key)).cloned().ok_or(StatusCode::UNAUTHORIZED)
+    match st.keys.read().unwrap().get(&sha256_hex(key)) {
+        Some(k) if !k.read => Ok(k.app_id.clone()),
+        Some(_) => Err(StatusCode::FORBIDDEN), // a read key (tlr_) must never write
+        None => Err(StatusCode::UNAUTHORIZED),
+    }
 }
 
 fn header_key(h: &HeaderMap) -> Option<&str> {

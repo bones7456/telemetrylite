@@ -81,7 +81,7 @@ OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <key>
 ```
 
-Keys are write-only and cannot read data. If one leaks, revoke it under Settings and issue a new one; revocation takes effect immediately.
+Write keys (`tl_…`) are write-only and cannot read data. Read keys (`tlr_…`, Settings → "Read API keys") are read-only, bound to one app and meant for analysis tools and AI agents; see [READ_API.md](READ_API.md). If a key leaks, revoke it under Settings and issue a new one; revocation takes effect immediately.
 
 ## Configuration
 

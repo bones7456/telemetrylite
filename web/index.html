@@ -10,22 +10,23 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 a{color:var(--accent);text-decoration:none;cursor:pointer}
-header{display:flex;align-items:center;gap:16px;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--line)}
+header{display:flex;align-items:center;gap:16px;padding:12px max(16px,calc((100% - 1100px) / 2 + 16px));background:var(--card);border-bottom:1px solid var(--line)}
 header b{font-size:16px}header .sp{flex:1}
 header select{padding:2px 6px;font-size:13px}
 .row .sp{flex:1}
 main{max-width:1100px;margin:0 auto;padding:24px 16px}
 main:has(.wide){max-width:min(1800px,100%)}
+body:has(.wide) header{padding-inline:16px}
 .kvs{display:flex;flex-wrap:wrap;gap:0 16px}.kvs>div{white-space:nowrap}.kvs>details{flex-basis:100%}
 td.nw{white-space:nowrap}
 footer{text-align:center;color:var(--mute);font-size:12px;padding:24px}
-h2{margin:0 0 16px;font-size:20px}h3{margin:0 0 12px;font-size:14px;color:var(--mute);font-weight:600}
+h2{margin:0 0 16px;font-size:20px}h3{margin:0 0 12px;font-size:15px;font-weight:600}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
 .grid .card{margin:0}
 .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
 .tile b{display:block;font-size:28px}.tile span{color:var(--mute)}
-.tabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line)}
 .tabs a{padding:8px 14px;color:var(--mute);border-bottom:2px solid transparent}
 .tabs a.on{color:var(--fg);border-color:var(--accent)}
 .bar{position:relative;padding:3px 8px;margin:2px 0;border-radius:4px;display:flex;justify-content:space-between;gap:8px;overflow:hidden}
@@ -33,7 +34,7 @@ h2{margin:0 0 16px;font-size:20px}h3{margin:0 0 12px;font-size:14px;color:var(--
 .bar span{position:relative;z-index:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar span+span{color:var(--mute);flex:none}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-input,select,button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+input,select,button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 10px;height:32px}
 button{cursor:pointer}button.p{background:var(--accent);border-color:var(--accent);color:#fff}button.d{color:var(--danger)}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--mute);font-weight:600}td.m{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
@@ -42,11 +43,12 @@ pre{background:var(--bg);padding:10px;border-radius:6px;overflow:auto;font-size:
 svg{width:100%;height:auto;display:block}
 textarea{width:100%;font:12px/1.5 ui-monospace,Menlo,monospace;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;resize:vertical}
 summary{cursor:pointer}
-.summary{display:flex;gap:32px;flex-wrap:wrap;margin:0 0 16px}.summary div{display:flex;flex-direction:column}.summary b{font-size:18px}
+.summary{display:flex;gap:4px 20px;margin-left:auto;align-self:center;font-size:13px}.summary div{display:flex;gap:8px;align-items:baseline}.summary b{font-size:16px}
 .banner{background:rgba(242,169,59,.13);border:1px solid rgba(242,169,59,.55);border-radius:8px;padding:8px 12px;margin-bottom:16px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:12px;color:var(--mute)}.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 table.heat{font-size:12px}.heat th,.heat td{padding:3px 6px;text-align:center;white-space:nowrap}.heat th:first-child,.heat td:first-child{text-align:left}.heat td.cell{border:2px solid var(--card)}
 th.num,td.num{text-align:right}
+table.keys{table-layout:fixed}.sub{border-top:1px solid var(--line);margin-top:16px;padding-top:16px}.keys th:nth-child(1){width:36%}.keys th:nth-child(2){width:24%}.keys th:nth-child(4){width:12%}.keys td:last-child{text-align:right}
 .seg{transition:opacity .12s}.legend span{transition:opacity .12s}
 .hit{fill:transparent}.hit:hover{fill:var(--hover)}
 .tip{position:fixed;z-index:50;display:none;pointer-events:none;min-width:190px;max-width:340px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.3);font-size:13px}
@@ -64,7 +66,7 @@ pre.keybox{font-size:15px;font-weight:700;border:1px dashed var(--warn);backgrou
 </head>
 <body>
 <div id="app"></div>
-<footer>TelemetryLite v__VERSION__ · IP geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP.com</a></footer>
+<footer><a href="https://github.com/bones7456/telemetrylite" target="_blank" rel="noopener">TelemetryLite</a> v__VERSION__</footer>
 <script>
 const I18N = {
   en: {
@@ -102,6 +104,20 @@ const I18N = {
     agentHint: 'Copy this prompt into Claude Code, Codex or Cursor, from the root of your app repository. The server URL and app id are filled in. The key is shown only once: issue a new key above and it is filled in automatically.',
     agentNoKey: 'The write key is not filled in yet. Issue a new key above.', agentKeyFilled: 'The new key is filled in.',
     agentCopy: 'Copy prompt', agentCopied: 'Copied',
+    readKeys: 'Read API keys (read-only, for analysis by AI agents and scripts)', issueReadKey: 'Issue new read key',
+    readKeysHint: 'A read key can only query this app\'s data through /r/v1/ and cannot report events. Send it as  Authorization: Bearer <key>.',
+    readKeyTitle: 'New read key (shown only once, save it now)',
+    analysisTitle: 'Analyze with an AI agent',
+    analysisHint: 'Copy this prompt into Claude Code, Codex or any agent that can run curl, and write your question in the box before copying. The server URL is filled in; the read key is shown only once, so issue a new read key above and it is filled in automatically.',
+    analysisNoKey: 'The read key is not filled in yet. Issue a new read key above.', analysisKeyFilled: 'The new read key is filled in.',
+    analysisPrompt: String.raw`Analyze my app's usage data with my self-hosted TelemetryLite read-only API.
+
+- Server: <SERVER_URL>
+- Read key: <READ_KEY>  (send it as the header "Authorization: Bearer <READ_KEY>")
+Start here and follow the guidance it returns:
+  curl -s -H "Authorization: Bearer <READ_KEY>" <SERVER_URL>/r/v1/
+
+My question: <write your question here>`,
     agentPrompt: String.raw`Integrate this project with my self-hosted TelemetryLite analytics server, which is compatible
 with the TelemetryDeck SDKs.
 
@@ -177,6 +193,20 @@ Steps:
     agentHint: '在你的 App 仓库根目录,把这段提示词复制给 Claude Code、Codex 或 Cursor。服务器地址和 App ID 已自动填好。key 只显示一次:在上方签发新 key 后会自动填进去。',
     agentNoKey: '写入 key 还没填入,请先在上方签发新 key。', agentKeyFilled: '新签发的 key 已填入。',
     agentCopy: '复制提示词', agentCopied: '已复制',
+    readKeys: '读取 API key(只读,供 AI agent 和脚本分析数据)', issueReadKey: '签发读取 key',
+    readKeysHint: '读取 key 只能通过 /r/v1/ 查询本 App 的数据,不能上报事件。用法:Authorization: Bearer <key>。',
+    readKeyTitle: '新的读取 key(仅显示这一次,请立即保存)',
+    analysisTitle: '让 AI agent 分析数据',
+    analysisHint: '把这段提示词复制给 Claude Code、Codex 或任何能执行 curl 的 agent,并先在框里写好你的问题再复制。服务器地址已填好;读取 key 只显示一次:在上方签发新的读取 key 后会自动填进去。',
+    analysisNoKey: '读取 key 还没填入,请先在上方签发新的读取 key。', analysisKeyFilled: '新签发的读取 key 已填入。',
+    analysisPrompt: String.raw`用我自托管的 TelemetryLite 只读 API 分析我的 App 的使用数据。
+
+- 服务器: <SERVER_URL>
+- 读取 key: <READ_KEY>  (放在请求头 "Authorization: Bearer <READ_KEY>" 里发送)
+先从这里开始,并按它返回的说明操作:
+  curl -s -H "Authorization: Bearer <READ_KEY>" <SERVER_URL>/r/v1/
+
+我的问题: <在这里写你的问题>`,
     agentPrompt: String.raw`把这个项目接入我自托管的 TelemetryLite 统计服务,它兼容 TelemetryDeck SDK。
 
 参数(不要自己编造;如果下面仍是 <占位符>,先问我):
@@ -461,8 +491,8 @@ const appShell = (app, tab, ...kids) => {
     app.apps.map(a => h('option', { value: a.id, selected: a.id === app.id }, a.name)));
   const sm = app.summary, stat = (label, v) => h('div', {}, h('span', { class: 'mute' }, label), h('b', {}, v));
   return shell(h('span', {}, h('span', { class: 'mute' }, ' / '), sw),
-    h('div', { class: 'summary', title: t('sumHint') }, stat(t('sumUsers'), fmt(sm.users)), stat(t('sumSdk'), sm.sdk || '—'), stat(t('sumErrors'), fmt(sm.errors))),
-    h('div', { class: 'tabs' }, TABS.map(([k, l]) => h('a', { href: `#/app/${app.id}/${k}`, class: k === tab ? 'on' : '' }, t(l)))), ...kids);
+    h('div', { class: 'tabs' }, TABS.map(([k, l]) => h('a', { href: `#/app/${app.id}/${k}`, class: k === tab ? 'on' : '' }, t(l))),
+      h('div', { class: 'summary', title: t('sumHint') }, stat(t('sumUsers'), fmt(sm.users)), stat(t('sumSdk'), sm.sdk || '—'), stat(t('sumErrors'), fmt(sm.errors)))), ...kids);
 };
 
 // Shared layout of the data pages: range + live/test selects, refresh controls, and a content area that is re-filled on every fetch.
@@ -613,6 +643,7 @@ async function eventsView(app) {
 
 // Prompt for AI coding agents, filled with this server's URL, the app id and (once issued) the write key.
 // Keep in sync with docs/AGENT_PROMPT*.md.
+const analysisPrompt = key => t('analysisPrompt').split('<SERVER_URL>').join(location.origin).split('<READ_KEY>').join(key || '<READ_KEY>');
 const agentPrompt = (app, key) => t('agentPrompt').split('<SERVER_URL>').join(location.origin).split('<APP_ID>').join(app.id).split('<WRITE_KEY>').join(key || '<WRITE_KEY>');
 
 async function settingsView(app) {
@@ -620,13 +651,18 @@ async function settingsView(app) {
   // The key name is required; it defaults to the current local time, e.g. "2026-11-08 06:20".
   const stamp = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
   const label = h('input', { placeholder: t('keyLabelPh'), value: stamp(), maxlength: 100 }), fresh = h('div'), labelErr = h('span', { class: 'mute', style: 'color:var(--danger)' });
-  // The key list is re-fetched and redrawn on its own, so a freshly issued key card stays on screen.
-  const keysBody = h('tbody');
-  const loadKeys = async () => keysBody.replaceChildren(...(await api('GET', `/apps/${app.id}/keys`)).map(k => h('tr', {}, h('td', {}, k.label), h('td', { class: 'm' }, k.prefix + '…'), h('td', {}, when(k.created_at)),
-    h('td', {}, k.revoked_at ? h('span', { class: 'mute' }, t('revoked')) : h('a', { onclick: async () => { if (confirm(t('revokeConfirm'))) { await api('DELETE', `/keys/${k.id}`); await loadKeys(); } } }, t('revoke'))))));
+  // The key lists are re-fetched and redrawn on their own, so a freshly issued key card stays on screen.
+  const keysBody = h('tbody'), readBody = h('tbody');
+  const keyRow = (k, reload) => h('tr', {}, h('td', {}, k.label), h('td', { class: 'm' }, k.prefix + '…'), h('td', {}, when(k.created_at)),
+    h('td', {}, k.revoked_at ? h('span', { class: 'mute' }, t('revoked')) : h('a', { onclick: async () => { if (confirm(t('revokeConfirm'))) { await api('DELETE', `/keys/${k.id}`); await reload(); } } }, t('revoke'))));
+  const loadKeys = async () => {
+    const all = await api('GET', `/apps/${app.id}/keys`);
+    keysBody.replaceChildren(...all.filter(k => k.kind !== 'read').map(k => keyRow(k, loadKeys)));
+    readBody.replaceChildren(...all.filter(k => k.kind === 'read').map(k => keyRow(k, loadKeys)));
+  };
   await loadKeys();
   const origin = location.origin;
-  const promptBox = h('textarea', { readonly: true, rows: 14, spellcheck: 'false' }), promptNote = h('div', { class: 'mute' }, t('agentNoKey')), copied = h('span', { class: 'mute' });
+  const promptBox = h('textarea', { readonly: true, rows: 10, spellcheck: 'false' }), promptNote = h('div', { class: 'mute' }, t('agentNoKey')), copied = h('span', { class: 'mute' });
   promptBox.value = agentPrompt(app, null);
   const copyPrompt = async () => {
     try { await navigator.clipboard.writeText(promptBox.value); } catch { promptBox.select(); document.execCommand('copy'); }
@@ -650,15 +686,43 @@ async function settingsView(app) {
     label.value = stamp();
     await loadKeys();
   };
+  const rlabel = h('input', { placeholder: t('keyLabelPh'), value: 'agent ' + stamp(), maxlength: 100 }), rfresh = h('div'), rErr = h('span', { class: 'mute', style: 'color:var(--danger)' });
+  const aBox = h('textarea', { rows: 8, spellcheck: 'false' }), aNote = h('div', { class: 'mute' }, t('analysisNoKey')), aCopied = h('span', { class: 'mute' });
+  aBox.value = analysisPrompt(null);
+  let aKey = '<READ_KEY>';
+  const copyAnalysis = async () => {
+    try { await navigator.clipboard.writeText(aBox.value); } catch { aBox.select(); document.execCommand('copy'); }
+    aCopied.textContent = t('agentCopied'); setTimeout(() => { aCopied.textContent = ''; }, 2000);
+  };
+  let issuingRead = false;
+  const mkRead = async () => {
+    if (issuingRead) return;
+    if (!rlabel.value.trim()) { rErr.textContent = t('labelRequired'); rlabel.focus(); return; }
+    rErr.textContent = ''; issuingRead = true;
+    let key;
+    try { ({ key } = await api('POST', `/apps/${app.id}/keys`, { label: rlabel.value.trim(), kind: 'read' })); }
+    catch (e) { if (e.message !== 'unauth') rErr.textContent = t('refreshFailed'); return; }
+    finally { issuingRead = false; }
+    aBox.value = aBox.value.split(aKey).join(key); aKey = key; aNote.textContent = t('analysisKeyFilled');
+    rfresh.replaceChildren(h('div', { class: 'card warn' }, h('div', { class: 'warn-title' }, '⚠ ' + t('readKeyTitle')), h('pre', { class: 'keybox' }, key),
+      h('pre', {}, `curl -s -H "Authorization: Bearer ${key}" "${origin}/r/v1/"`)));
+    rlabel.value = 'agent ' + stamp();
+    await loadKeys();
+  };
   return appShell(app, 'settings',
     h('div', { class: 'card' }, h('h3', {}, t('basicInfo')), h('div', { class: 'row' }, name, t('retention'), days, t('daysUnit'),
       h('button', { class: 'p', onclick: async () => { await api('PATCH', `/apps/${app.id}`, { name: name.value, retention_days: +days.value }); route(); } }, t('save'))),
       h('div', { class: 'mute' }, t('appId'), app.id)),
     h('div', { class: 'card' }, h('h3', {}, t('writeKeys')),
       h('div', { class: 'row' }, label, h('button', { class: 'p', onclick: mk }, t('issueKey')), labelErr), fresh,
-      h('table', {}, h('thead', {}, h('tr', {}, ['colLabel', 'colPrefix', 'colCreated', ''].map(x => h('th', {}, x && t(x))))), keysBody)),
-    h('div', { class: 'card' }, h('h3', {}, t('agentTitle')), h('div', { class: 'mute', style: 'margin-bottom:8px' }, t('agentHint')), promptBox,
-      h('div', { class: 'row', style: 'margin:8px 0 0' }, h('button', { class: 'p', onclick: copyPrompt }, t('agentCopy')), copied, h('span', { class: 'sp' }), promptNote)),
+      h('table', { class: 'keys' }, h('thead', {}, h('tr', {}, ['colLabel', 'colPrefix', 'colCreated', ''].map(x => h('th', {}, x && t(x))))), keysBody),
+    h('div', { class: 'sub' }, h('h3', {}, t('agentTitle')), h('div', { class: 'mute', style: 'margin-bottom:8px' }, t('agentHint')), promptBox,
+      h('div', { class: 'row', style: 'margin:8px 0 0' }, h('button', { class: 'p', onclick: copyPrompt }, t('agentCopy')), copied, h('span', { class: 'sp' }), promptNote))),
+    h('div', { class: 'card' }, h('h3', {}, t('readKeys')), h('div', { class: 'mute', style: 'margin-bottom:8px' }, t('readKeysHint')),
+      h('div', { class: 'row' }, rlabel, h('button', { class: 'p', onclick: mkRead }, t('issueReadKey')), rErr), rfresh,
+      h('table', { class: 'keys' }, h('thead', {}, h('tr', {}, ['colLabel', 'colPrefix', 'colCreated', ''].map(x => h('th', {}, x && t(x))))), readBody),
+    h('div', { class: 'sub' }, h('h3', {}, t('analysisTitle')), h('div', { class: 'mute', style: 'margin-bottom:8px' }, t('analysisHint')), aBox,
+      h('div', { class: 'row', style: 'margin:8px 0 0' }, h('button', { class: 'p', onclick: copyAnalysis }, t('agentCopy')), aCopied, h('span', { class: 'sp' }), aNote))),
     h('div', { class: 'card' }, h('h3', {}, t('danger')),
       h('button', { class: 'd', onclick: async () => { if (confirm(t('deleteConfirm', app.name))) { await api('DELETE', `/apps/${app.id}`); location.hash = '#/'; } } }, t('deleteApp'))));
 }

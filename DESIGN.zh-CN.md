@@ -11,7 +11,7 @@
 |---|---|
 | OTLP 范围 | 只收 **Logs**,LogRecord 视为「事件」。Metrics/Traces 返回成功但丢弃(§4.2) |
 | 内部数据模型 | **TelemetryDeck 风格 signal** 宽表,OTLP LogRecord 映射进来 |
-| 账户模型 | 单管理员 + 多 App;每个 App 可签发多个只写 API key |
+| 账户模型 | 单管理员 + 多 App;每个 App 可签发多个写入 key 和多个读取 key |
 | 规模 | 自托管单机,日事件最多约 100 万 |
 | 隐私 | 不存 IP;GeoIP 在内存中解析,只保存国家 / 地区 / 城市 |
 | 接入 | **AI 辅助接入**:界面按 App 生成提示词(已填好服务器地址、App ID、key),编程 agent 照着做完 SDK 集成 |
@@ -128,6 +128,16 @@ CREATE INDEX signal_app_type ON signal(app_id, type, ts);
 
 **管理端**:单管理员。密码首次启动时生成并在日志里打印一次,或由 `TL_ADMIN_PASSWORD` 指定(每次启动都生效,忘记密码也用它重置);库里存 argon2 哈希。登录后发 `HttpOnly; SameSite=Strict` cookie(`X-Forwarded-Proto` 为 https 时加 `Secure`),内容是不透明随机 token;会话存内存、有效 30 天、重启后失效。登录失败延迟 0.5 秒,并由 nginx 限速。TLS 由 nginx 终结(§9)。
 
+读取 key(供分析工具和 AI agent 使用):同一张表(`api_key.kind = 'read'`,schema 版本 2,旧 key 迁移为 `write`),前缀 `tlr_`,绑定一个 App,只显示一次,可吊销。内存映射为 `hash → (app id, 是否读 key)`:写入接口拒绝读 key(`403`),`/r/v1/*` 拒绝写入 key(`403 wrong_key_type`),两类 key 互相不能越权。读取 key 通过 `Authorization: Bearer` 发送(不放路径里),访问不了 `/api/*`。
+
+### 5.1 读取 API(`/r/v1`)
+
+`GET /r/v1/`(自描述)、`/overview`(总量及与上一周期对比、趋势、热门事件、分布、错误、按周留存)、`/events`(原始事件,`where=字段:值`,游标翻页)、`/query`(指标 × 最多 3 个分组字段 × 时间粒度)。完整说明见 [docs/READ_API.zh-CN.md](docs/READ_API.zh-CN.md)。
+
+- 为 agent 设计:自描述、每个响应带 `meta`、拒绝未知参数、错误为 `{error, message, hint}`、ISO 8601 时间、可选 `csv` / `md` 输出、不静默截断(`truncated`、`next_cursor`)。
+- 天然安全:没有原始 SQL;字段走白名单,`payload.<key>` 作为 JSON 路径参数绑定,过滤值也是绑定参数。
+- 保护写入路径:查询使用独立连接和 `PRAGMA query_only`,最多同时 4 个,5 秒后通过 SQLite 的 interrupt 取消;每个 key 每分钟 120 次请求(内存计数)。
+
 ## 6. 管理界面
 
 一个 HTML 文件,原生 JavaScript,内联 SVG 图表,明暗主题跟随系统。
@@ -140,7 +150,7 @@ CREATE INDEX signal_app_type ON signal(app_id, type, ts);
 - **事件类型**:所有事件类型及其用户数、事件数、最近一次时间;点击名称跳到按该事件过滤的事件页。
 - **错误**:趋势,以及按错误 id 和类别汇总的表格,数据来自 SDK 预设的 `TelemetryDeck.Error.occurred` 事件。
 - **事件**:最近的原始事件、按事件名精确过滤、自定义参数直接展示、`TelemetryDeck.*` 系统参数折叠。
-- **设置**:重命名、数据保留天数、写入 key 管理(只显示一次并附接入代码片段、吊销)、**AI agent 接入提示词**(按界面语言,自动填入浏览器当前的服务器地址、App ID,以及签发后的写入 key;文本写在 `web/index.html` 里,需与 `docs/AGENT_PROMPT*.md` 保持同步)、删除 App。
+- **设置**:读取 key 管理和给 AI agent 的**分析提示词**(已填好服务器地址和读取 key,见 §5.1);重命名、数据保留天数、写入 key 管理(只显示一次并附接入代码片段、吊销)、**AI agent 接入提示词**(按界面语言,自动填入浏览器当前的服务器地址、App ID,以及签发后的写入 key;文本写在 `web/index.html` 里,需与 `docs/AGENT_PROMPT*.md` 保持同步)、删除 App。
 - **刷新**:手动「刷新」按钮(默认)和可选的自动刷新(10 秒 / 30 秒 / 1 分钟 / 5 分钟,选择记在浏览器里)。两者都只重新请求数据并原地更新;后台标签页时自动刷新暂停,请求不会重叠;事件页没有新事件时不动 DOM,已展开的参数不会被折叠。
 - **语言**:默认英文,页头可切换中文,选择记在 `localStorage`。
 
@@ -151,6 +161,7 @@ src/main.rs      启动、环境变量配置、路由、优雅停机、保留期
 src/db.rs        表结构、writer 线程、过期清理
 src/ingest.rs    TelemetryDeck 与 OTLP 入口、归一化、限制
 src/admin.rs     /api/*:会话、App、key,以及统计 / 用户 / 留存 / 版本 / 错误 / 事件查询
+src/read.rs      /r/v1/*:读取 key 认证、限流、describe / overview / events / query
 src/geo.rs       mmdb 加载(热替换)、下载与更新
 src/i18n.rs      日志语言(英文 / 中文)
 web/index.html   整个管理界面

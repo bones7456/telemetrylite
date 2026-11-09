@@ -11,7 +11,7 @@ English | [简体中文](DESIGN.zh-CN.md)
 |---|---|
 | OTLP scope | **Logs only**; a LogRecord is an "event". Metrics and traces are accepted and discarded (§4.2) |
 | Internal data model | A TelemetryDeck-style **signal** wide table; OTLP LogRecords are mapped into it |
-| Accounts | One admin, many apps; each app can issue several write-only API keys |
+| Accounts | One admin, many apps; each app can issue several write keys and several read keys |
 | Scale | Self-hosted single machine, up to about 1 M events per day |
 | Privacy | Never store IPs; GeoIP is resolved in memory and only country / region / city are kept |
 | Onboarding | **AI-assisted integration**: the UI generates a per-app prompt (server URL, app id, key filled in) that a coding agent follows to integrate the SDK |
@@ -126,6 +126,16 @@ Verified against the Swift SDK source: the SDK posts to `{baseURL}/v2/` (or `/v2
 
 **Write keys (for SDKs)**: `tl_<32 random bytes, base64url>`; shown once at creation, only the SHA-256 is stored. Several per app (each needs a name; the UI suggests the current time), revocable at any time, write-only for that app. Authentication is a lookup in the in-memory map.
 
+**Read keys (for analysis tools and AI agents)**: same table (`api_key.kind = 'read'`, schema version 2; existing keys are migrated as `write`), prefix `tlr_`, bound to one app, shown once, revocable. The in-memory map is `hash → (app id, is_read)`: the ingest endpoints refuse a read key (`403`) and `/r/v1/*` refuses a write key (`403 wrong_key_type`), so neither kind can do the other's job. Read keys are sent as `Authorization: Bearer` (never in the path) and cannot reach `/api/*`.
+
+### 5.1 Read API (`/r/v1`)
+
+`GET /r/v1/` (self-description), `/overview` (totals with change versus the previous period, trend, top events, breakdowns, errors, weekly retention), `/events` (raw events, `where=field:value`, cursor paging), `/query` (metric × up to 3 group-by fields × interval). Full reference: [docs/READ_API.md](docs/READ_API.md).
+
+- Built for agents: self-describing, a `meta` block on every response, unknown parameters rejected, errors as `{error, message, hint}`, ISO 8601 timestamps, optional `csv` / `md` output, nothing truncated silently (`truncated`, `next_cursor`).
+- Safe by construction: no raw SQL; fields are whitelisted, `payload.<key>` is bound as a JSON path parameter, filter values are bound parameters.
+- Protection of the write path: queries run on their own connection with `PRAGMA query_only`, at most 4 at a time, cancelled after 5 s via SQLite's interrupt handle; 120 requests per minute per key (in memory).
+
 **Admin**: one admin. The password is generated on first start and logged once, or set with `TL_ADMIN_PASSWORD` (applied on every start, which is also the way to reset it); stored as an argon2 hash. A login sets an opaque random token in an `HttpOnly; SameSite=Strict` cookie (`Secure` when `X-Forwarded-Proto` is https); sessions live in memory for 30 days and are lost on restart. Failed logins are delayed 0.5 s and rate-limited by nginx. TLS terminates at nginx (§9).
 
 ## 6. Admin UI
@@ -140,7 +150,7 @@ One HTML file, plain JavaScript, inline SVG charts, light/dark by system setting
 - **Event types**: every event type with users, events and last-seen time; a name opens the Events page filtered to it.
 - **Errors**: trend and a table grouped by error id and category, from the SDK's preset `TelemetryDeck.Error.occurred` event.
 - **Events**: recent raw events, exact event-name filter, custom parameters inline, `TelemetryDeck.*` system parameters collapsed.
-- **Settings**: rename, retention days, write-key management (copy-once keys with ready-made integration snippets, revoke), an **AI-agent integration prompt** (filled in with the browser's server URL, the app id and — once issued — the write key, in the UI language; the text lives in `web/index.html` and must be kept in sync with `docs/AGENT_PROMPT*.md`), delete app.
+- **Settings**: rename, retention days, read-key management and an **analysis prompt** for AI agents (server URL and read key filled in; see §5.1), write-key management (copy-once keys with ready-made integration snippets, revoke), an **AI-agent integration prompt** (filled in with the browser's server URL, the app id and — once issued — the write key, in the UI language; the text lives in `web/index.html` and must be kept in sync with `docs/AGENT_PROMPT*.md`), delete app.
 - **Refresh**: a manual Refresh button (default) and an optional auto refresh (10 s / 30 s / 1 min / 5 min, remembered in the browser). Both only re-fetch data and update the view in place; auto refresh pauses in background tabs, never overlaps requests, and the events page leaves the DOM alone when there is nothing new, so expanded parameters stay open.
 - **Languages**: English by default, Chinese selectable from the header; the choice is remembered in `localStorage`.
 
@@ -151,6 +161,7 @@ src/main.rs      startup, environment configuration, routing, graceful shutdown,
 src/db.rs        schema, writer thread, retention purge
 src/ingest.rs    TelemetryDeck and OTLP handlers, normalization, limits
 src/admin.rs     /api/*: sessions, apps, keys, and the stats / users / retention / versions / errors / event queries
+src/read.rs      /r/v1/*: read-key auth, rate limit, describe / overview / events / query
 src/geo.rs       mmdb loading (hot reload), download and update
 src/i18n.rs      log language (English / Chinese)
 web/index.html   the whole admin UI
@@ -175,7 +186,8 @@ Main dependencies: `axum`, `tokio`, `rusqlite` (bundled), `prost`, `serde_json`,
 ## 10. Not implemented yet / deliberately skipped
 
 - Pre-aggregated daily statistics (queries scan the indexed raw table; fine for the intended scale, add a roll-up table if it gets slow).
-- Per-key rate limiting (backpressure plus nginx `limit_req` cover it), `last_used_at` on keys.
+- Per-key rate limiting on the write path (backpressure plus nginx `limit_req` cover it; the read API has its own limit), `last_used_at` on keys.
+- A raw read-only SQL endpoint for agents (`/r/v1/query` covers aggregation by any field and custom parameter; add SQL only if that proves too limiting).
 - Custom queries / insights (a query builder like TelemetryDeck's Playground), funnels, export, user-defined dashboards.
 - Changing the admin password in the UI (restart with a new `TL_ADMIN_PASSWORD`), persistent sessions, multiple users and roles.
 - CIDR support in `TL_TRUSTED_PROXY`; Metrics and Traces; gRPC; alerts; high availability.

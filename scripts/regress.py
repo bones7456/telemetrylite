@@ -63,7 +63,7 @@ def check(name, cond, detail=""):
 def run():
     print("== UI and login")
     s, _, b, _ = req("GET", "/"); check("GET / is 200 and serves the UI", s == 200 and b"TelemetryLite" in b)
-    m = re.search(rb"TelemetryLite v(\d+\.\d+\.\d+[\w.-]*)", b)
+    m = re.search(rb"TelemetryLite(?:</a>)? v(\d+\.\d+\.\d+[\w.-]*)", b)
     check("the page footer shows the running version (placeholder replaced)", m is not None and b"__VERSION__" not in b)
     if args.spawn:
         out = subprocess.run([os.path.abspath(args.spawn), "--version"], capture_output=True, text=True).stdout.strip()
@@ -214,6 +214,129 @@ def run():
     check("an unknown platform gives empty results", g("stats", "Symbian")["totals"]["users"] == 0)
     evil = "x' OR '1'='1"; check("a hostile platform value is only data (no SQL injection)", g("stats", evil)["totals"]["users"] == 0 and g("stats")["totals"]["users"] == 5)
     req("DELETE", f"/api/apps/{pa}")
+
+    print("== read API (read keys, /r/v1)")
+    def rd(path, k, method="GET", extra=None):   # no session cookie: only the read key authenticates
+        c = http.client.HTTPConnection(u.hostname, u.port, timeout=20)
+        h = dict(extra or {})
+        if k: h["Authorization"] = f"Bearer {k}"
+        if args.host: h["Host"] = args.host
+        c.request(method, path, None, h); r = c.getresponse(); b = r.read()
+        try: j = json.loads(b)
+        except Exception: j = None
+        return r.status, j, b, r
+    ra_app = req("POST", "/api/apps", {"name": "ReadA"})[1]["id"]; rb_app = req("POST", "/api/apps", {"name": "ReadB"})[1]["id"]
+    wkey = req("POST", f"/api/apps/{ra_app}/keys", {"label": "w"})[1]["key"]; wkey_b = req("POST", f"/api/apps/{rb_app}/keys", {"label": "wb"})[1]["key"]
+    s, j, _, _ = req("POST", f"/api/apps/{ra_app}/keys", {"label": "agent", "kind": "read"}); rkey = j["key"]
+    check("issue a read key (tlr_ prefix)", s == 200 and rkey.startswith("tlr_"))
+    check("an unknown key kind is rejected (400)", req("POST", f"/api/apps/{ra_app}/keys", {"label": "x", "kind": "admin"})[0] == 400)
+    kl = req("GET", f"/api/apps/{ra_app}/keys")[1]
+    check("key list tells the kinds apart and never exposes keys", {k["kind"] for k in kl} == {"write", "read"} and all("key" not in k for k in kl))
+    rkey_b = req("POST", f"/api/apps/{rb_app}/keys", {"label": "agent-b", "kind": "read"})[1]["key"]
+
+    def rtd(user, typ, plan=None, os_name="iOS", test="false", k=None):
+        pl = {"TelemetryDeck.Device.operatingSystem": os_name, "TelemetryDeck.AppInfo.version": "5.0"}
+        if plan: pl["plan"] = plan
+        return req("POST", f"/k/{k or wkey}/v2/", [{"receivedAt": now, "clientUser": user, "sessionID": "s-" + user, "type": typ, "payload": pl, "isTestMode": test}])[0]
+    rtd("r1", "Purchase.completed", "yearly"); rtd("r2", "Purchase.completed", "yearly"); rtd("r3", "Purchase.completed", "monthly"); rtd("r4", "Purchase.completed", "yearly", "Android")
+    for _ in range(5): rtd("r1", "Page.view")
+    rtd("r9", "Debug.event", test="true"); rtd("b1", "Other.app", k=wkey_b)
+    time.sleep(1.0)
+
+    print("-- authentication and isolation")
+    s, j, _, _ = rd("/r/v1/", None); check("no key is 401 missing_key with a hint", s == 401 and j["error"] == "missing_key" and "Bearer" in j["hint"], str(j))
+    s, j, _, _ = rd("/r/v1/", "tlr_wrong"); check("wrong key is 401 invalid_key", s == 401 and j["error"] == "invalid_key")
+    s, j, _, _ = rd("/r/v1/", wkey); check("a write key cannot read (403 wrong_key_type)", s == 403 and j["error"] == "wrong_key_type" and "tlr_" in j["hint"])
+    check("a read key cannot write: TelemetryDeck path (403)", td([{"clientUser": "x", "type": "Hack"}], rkey) == 403)
+    check("a read key cannot write: OTLP bearer (403)", req("POST", "/v1/logs", {"resourceLogs": []}, {"Authorization": f"Bearer {rkey}"})[0] == 403)
+    check("a read key does not open the admin API (401)", rd("/api/apps", rkey)[0] == 401 and rd(f"/api/apps/{ra_app}/keys", rkey)[0] == 401)
+    check("x-api-key header works too", rd("/r/v1/", None, extra={"x-api-key": rkey})[0] == 200)
+    check("POST is not allowed on the read API (405)", rd("/r/v1/overview", rkey, "POST")[0] == 405)
+
+    print("-- describe")
+    s, d, _, _ = rd("/r/v1/", rkey); check("GET /r/v1/ is 200", s == 200 and d["service"] == "TelemetryLite")
+    check("describe: the app comes from the key", d["app"]["id"] == ra_app and d["app"]["name"] == "ReadA" and d["app"]["retention_days"] == 90)
+    check("describe lists event types of live data only", {t["type"] for t in d["event_types"]["rows"]} == {"Purchase.completed", "Page.view"}, str(d["event_types"]))
+    check("describe lists platforms and custom parameters", {p["platform"] for p in d["platforms"]} == {"iOS", "Android"} and "plan" in {p["key"] for p in d["custom_parameters"]["rows"]})
+    check("describe documents all endpoints with parameters", {e["path"] for e in d["endpoints"]} == {"/r/v1/", "/r/v1/overview", "/r/v1/events", "/r/v1/query"} and "group_by" in next(e for e in d["endpoints"] if e["path"].endswith("query"))["params"])
+    check("describe carries the guidance for agents (so the prompt can stay short)", len(d["guide_for_agents"]) >= 3 and "overview" in d["guide_for_agents"][0])
+    check("describe: /r/v1 without the slash works", rd("/r/v1", rkey)[0] == 200)
+    check("describe: first/last event are ISO timestamps", d["data"]["last_event_at"].endswith("Z") and d["data"]["first_event_at"].endswith("Z"))
+
+    print("-- overview")
+    s, o, _, _ = rd("/r/v1/overview?days=7", rkey); check("overview is 200", s == 200)
+    check("overview totals: live events and users (test data hidden)", o["totals"]["events"]["value"] == 9 and o["totals"]["users"]["value"] == 4 and o["totals"]["sessions"]["value"] == 4, str(o["totals"]))
+    check("overview: previous period and change", o["totals"]["events"]["previous"] == 0 and o["totals"]["events"]["change_pct"] is None and o["totals"]["new_users"] == 4)
+    check("overview: meta states the window and data kind", o["meta"]["data"] == "live" and o["meta"]["app_id"] == ra_app and o["meta"]["window"]["since"].endswith("Z"))
+    check("overview: top events and series", o["top_events"][0]["type"] == "Page.view" and o["top_events"][0]["events"] == 5 and sum(x["events"] for x in o["series"]) == 9)
+    check("overview: breakdowns carry a share", {r["value"] for r in o["breakdowns"]["app_version"]} == {"5.0"} and o["breakdowns"]["app_version"][0]["share"] == 1.0)
+    check("overview: retention cohorts are present", o["retention"]["basis"] == "live" and o["retention"]["cohorts"] and o["retention"]["cohorts"][-1]["users"] == 4, str(o["retention"]))
+    check("overview: errors section exists", isinstance(o["errors"], list))
+    check("overview?test=all includes test data", rd("/r/v1/overview?test=all", rkey)[1]["totals"]["events"]["value"] == 10)
+    check("overview?test=1 is test data only", rd("/r/v1/overview?test=1", rkey)[1]["totals"]["events"]["value"] == 1)
+    ov = rd("/r/v1/overview?platform=android", rkey)[1]; check("overview?platform= filters (case-insensitive)", ov["totals"]["events"]["value"] == 1 and ov["totals"]["users"]["value"] == 1)
+    check("overview?days=1 buckets by hour", rd("/r/v1/overview?days=1", rkey)[1]["meta"]["series_bucket"] == "hour")
+    check("overview?tz shifts the buckets", rd("/r/v1/overview?days=3&tz=480", rkey)[1]["meta"]["tz_minutes"] == 480)
+    check("overview with a window in the past is empty", rd("/r/v1/overview?since=2020-01-01&until=2020-02-01", rkey)[1]["totals"]["events"]["value"] == 0)
+
+    print("-- events")
+    s, e, _, _ = rd("/r/v1/events?type=Purchase.completed", rkey); rows = e["rows"]
+    check("events: filter by type", s == 200 and len(rows) == 4 and all(r["type"] == "Purchase.completed" for r in rows))
+    r0 = rows[0]
+    check("events: ISO time, short user, params as an object, no null fields", r0["time"].endswith("Z") and len(r0["user"]) == 12 and isinstance(r0["params"], dict) and "plan" in r0["params"] and all(v is not None for v in r0.values()), str(r0))
+    check("events: where=payload.plan:yearly", len(rd("/r/v1/events?type=Purchase.completed&where=payload.plan:yearly", rkey)[1]["rows"]) == 3)
+    check("events: where on a dimension and two where= are ANDed", len(rd("/r/v1/events?where=platform:Android&where=payload.plan:yearly", rkey)[1]["rows"]) == 1)
+    p1 = rd("/r/v1/events?type=Page.view&limit=2", rkey)[1]
+    check("events: limit truncates and gives next_cursor", len(p1["rows"]) == 2 and p1["meta"]["truncated"] is True and p1["next_cursor"])
+    p2 = rd(f"/r/v1/events?type=Page.view&limit=2&cursor={p1['next_cursor']}", rkey)[1]
+    check("events: cursor pages without overlap", len(p2["rows"]) == 2 and not ({r["id"] for r in p1["rows"]} & {r["id"] for r in p2["rows"]}))
+    p3 = rd(f"/r/v1/events?type=Page.view&limit=2&cursor={p2['next_cursor']}", rkey)[1]
+    check("events: the last page is not truncated and has no cursor", len(p3["rows"]) == 1 and p3["meta"]["truncated"] is False and p3["next_cursor"] is None)
+    check("events: test data is hidden by default and shown with test=1", all(r["type"] != "Debug.event" for r in rd("/r/v1/events?limit=500", rkey)[1]["rows"]) and rd("/r/v1/events?test=1", rkey)[1]["rows"][0]["test"] is True)
+    s, _, b, r = rd("/r/v1/events?type=Purchase.completed&format=csv", rkey)
+    check("events: format=csv", s == 200 and "text/csv" in r.getheader("content-type") and b.decode().splitlines()[0].startswith("id,") and len(b.decode().splitlines()) == 5)
+    check("events: limit above the maximum is rejected (400)", rd("/r/v1/events?limit=9999", rkey)[0] == 400)
+
+    print("-- query")
+    s, qd, _, _ = rd("/r/v1/query?type=Purchase.completed&metric=events,users&group_by=payload.plan", rkey)
+    got = {x["payload.plan"]: (x["events"], x["users"]) for x in qd["rows"]}
+    check("query: group by a custom parameter with two metrics", s == 200 and got == {"yearly": (3, 3), "monthly": (1, 1)}, str(qd))
+    check("query: default order is by the first metric, descending", qd["rows"][0]["payload.plan"] == "yearly")
+    check("query: meta echoes the query", qd["meta"]["query"]["metric"] == ["events", "users"] and qd["meta"]["query"]["group_by"] == ["payload.plan"])
+    qd = rd("/r/v1/query?metric=users&group_by=platform", rkey)[1]; check("query: group_by=platform", {x["platform"]: x["users"] for x in qd["rows"]} == {"iOS": 3, "Android": 1}, str(qd))
+    qd = rd("/r/v1/query?interval=day&metric=events", rkey)[1]; check("query: interval=day adds t and sums to the total", sum(x["events"] for x in qd["rows"]) == 9 and all("t" in x for x in qd["rows"]))
+    qd = rd("/r/v1/query?interval=week&group_by=type&days=14", rkey)[1]; check("query: interval=week with a group", len(qd["rows"]) == 2 and len(qd["rows"][0]["t"]) == 10, str(qd["rows"]))
+    check("query: interval=month", len(rd("/r/v1/query?interval=month", rkey)[1]["rows"][0]["t"]) == 7)
+    qd = rd("/r/v1/query", rkey)[1]; check("query: no grouping gives one total row", qd["rows"] == [{"events": 9}], str(qd["rows"]))
+    qd = rd("/r/v1/query?group_by=type&limit=1", rkey)[1]; check("query: limit truncates and says so", len(qd["rows"]) == 1 and qd["meta"]["truncated"] is True and "truncated_hint" in qd["meta"])
+    qd = rd("/r/v1/query?group_by=payload.plan&where=type:Purchase.completed&where=platform:iOS&order=key", rkey)[1]; check("query: where + order=key", [x["payload.plan"] for x in qd["rows"]] == ["monthly", "yearly"], str(qd["rows"]))
+    qd = rd("/r/v1/query?group_by=payload.missing&metric=sessions", rkey)[1]; check("query: a missing parameter groups as (none)", qd["rows"] == [{"payload.missing": "(none)", "sessions": 4}], str(qd["rows"]))
+    s, _, b, _ = rd("/r/v1/query?group_by=type&format=md", rkey)
+    check("query: format=md renders a table", s == 200 and b.decode().startswith("| type | events |\n| --- | --- |\n"), b.decode()[:80])
+    check("query: a hostile where value is only data", rd("/r/v1/query?where=type:" + urllib.parse.quote("x' OR '1'='1"), rkey)[1]["rows"] == [{"events": 0}])
+    for path, code, why in [("/r/v1/query?metric=revenue", "bad_metric", "unknown metric"), ("/r/v1/query?group_by=nope", "unknown_field", "unknown field"),
+                            ("/r/v1/query?group_by=type,locale,country,city", "too_many_groups", "more than 3 groups"), ("/r/v1/query?interval=year", "bad_interval", "unknown interval"),
+                            ("/r/v1/query?where=oops", "bad_where", "malformed where"), ("/r/v1/query?since=yesterday", "bad_time", "unparsable time"),
+                            ("/r/v1/query?since=2026-02-01&until=2026-01-01", "bad_window", "empty window"), ("/r/v1/query?test=maybe", "bad_parameter", "bad test value"),
+                            ("/r/v1/query?days=abc", "bad_parameter", "non-numeric days"), ("/r/v1/query?metirc=users", "unknown_parameter", "a typo in a parameter name"),
+                            ("/r/v1/query?group_by=payload.a%22b", "bad_field", "a quote in a payload key"), ("/r/v1/overview?format=csv", "bad_format", "csv on overview"), ("/r/v1/?x=1", "unknown_parameter", "any parameter on describe")]:
+        s, j, _, _ = rd(path, rkey); check(f"error: {why} -> 400 {code} with a hint", s == 400 and j["error"] == code and j["message"] and j["hint"], str(j))
+    check("unknown_parameter lists the valid ones", "metric" in rd("/r/v1/query?metirc=users", rkey)[1]["hint"])
+    check("SQL in a field name is rejected, not executed", rd("/r/v1/query?group_by=" + urllib.parse.quote("type; DROP TABLE signal"), rkey)[1]["error"] == "unknown_field" and rd("/r/v1/overview", rkey)[1]["totals"]["events"]["value"] == 9)
+
+    print("-- isolation, revocation, rate limit")
+    check("another app's read key sees only its own data", rd("/r/v1/", rkey_b)[1]["app"]["id"] == rb_app and rd("/r/v1/overview", rkey_b)[1]["totals"]["events"]["value"] == 1)
+    check("read keys do not leak between apps (types)", {t["type"] for t in rd("/r/v1/", rkey_b)[1]["event_types"]["rows"]} == {"Other.app"})
+    kid = next(k["id"] for k in req("GET", f"/api/apps/{ra_app}/keys")[1] if k["kind"] == "read" and k["prefix"] == rkey[:10])
+    check("revoke the read key", req("DELETE", f"/api/keys/{kid}")[0] == 200)
+    check("a revoked read key stops working immediately (401)", rd("/r/v1/", rkey)[0] == 401)
+    check("the write key of the same app still works", rtd("r1", "After.revoke") == 200)
+    tkey = req("POST", f"/api/apps/{ra_app}/keys", {"label": "burst", "kind": "read"})[1]["key"]
+    codes = [rd("/r/v1/", tkey)[0] for _ in range(125)]
+    s, j, _, r = rd("/r/v1/", tkey)
+    check("rate limit: 120 requests per minute per key, then 429 with Retry-After", codes[:120] == [200] * 120 and s == 429 and j["error"] == "rate_limited" and int(r.getheader("retry-after")) >= 1, str(codes[118:]))
+    check("rate limit is per key", rd("/r/v1/", rkey_b)[0] == 200)
+    req("DELETE", f"/api/apps/{ra_app}"); req("DELETE", f"/api/apps/{rb_app}")
 
     if GEO:
         print("== GeoIP")
