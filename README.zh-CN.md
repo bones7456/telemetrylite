@@ -4,12 +4,14 @@
 
 轻量的事件收集服务:Rust 单二进制 + SQLite。同时兼容 **TelemetryDeck SDK** 与 **OTLP/HTTP Logs**,自带管理界面,以及供 App 使用的写入 key 和供分析使用的只读 key。管理界面支持中文和英文。
 
-> **一次粘贴,让 AI 完成接入。** 管理界面会为每个 App 生成一段现成的提示词,服务器地址、App ID 和写入 key 都已自动填好。复制给 Claude Code、Codex 或 Cursor,你的编程 agent 就会添加 SDK、指向你的服务器并验证连通性。不用读文档,不用改代码片段。→ [使用方法](#接入)
+> **为 AI agent 优化,接入和分析都是。**
+> - **接入:** 管理界面生成一段提示词,服务器地址、App ID 和写入 key 都已填好。粘贴给 Claude Code、Codex 或 Cursor,agent 就会添加 SDK、指向你的服务器并验证连通性。
+> - **分析:** 签发一个只读 key,粘贴一段很短的提示词,agent 就通过自描述的 API(`/r/v1/`)探索你的数据:它会列出事件类型和自定义参数,附带示例查询和使用指引,拼错参数会被拒绝而不是被猜,每个错误都有 `hint`。不用打开看板,不用安装 MCP,key 只能读一个 App。→ [使用方法](#接入) · [读取 API](docs/READ_API.zh-CN.md)
 
 - 写入:`/k/<key>/v2/`(TelemetryDeck)、`/v1/logs`(OTLP,protobuf/JSON,支持 gzip)
 - 不存 IP;可选 GeoIP(DB-IP City Lite)解析国家/地区/城市
 - 管理界面:概览(活跃用户与事件、按周留存队列、App 版本随时间变化、热门事件、版本/系统/机型/语言/国家/城市分布)、新用户与回访用户、事件类型、错误、事件浏览器、API key 管理;测试事件被隐藏时有提示;支持手动刷新(默认)和可选的自动刷新,刷新只重新请求数据
-- **给 agent 用的读取 API**:每个 App 一个只读 key 加一套自描述的 JSON API(`/r/v1`),Claude、Codex 或脚本不用打开页面就能分析数据 → [docs/READ_API.zh-CN.md](docs/READ_API.zh-CN.md)
+- **给 agent 用的读取 API**:每个 App 的只读 key 加自描述的 JSON API(`/r/v1`),带示例查询、带 `hint` 的结构化错误,以及紧凑的 `md` / `csv` 输出 → [docs/READ_API.zh-CN.md](docs/READ_API.zh-CN.md)
 - **一个应用,多个平台**:iOS 和 Android(以及 macOS、watchOS 等)可以共用一个应用和 key;平台筛选(取自 SDK 上报的操作系统参数)让每个页面都能只看某一个平台
 - **AI 辅助接入**:按 App 生成、信息全部填好的提示词,复制给编程 agent 即可(中英文)
 - 设计说明见 [DESIGN.zh-CN.md](DESIGN.zh-CN.md)

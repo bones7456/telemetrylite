@@ -43,7 +43,7 @@ Fields for `group_by` / `where`: `type`, `platform`, `app_version`, `os_version`
 
 ## Built for agents
 
-- Self-describing (`/r/v1/`), so the prompt does not go stale.
+- Self-describing (`/r/v1/`): event types, custom parameters, `guide_for_agents` and ready-made `examples`, so the prompt does not go stale.
 - Every response has `meta` with the effective window, data kind (live / test / all), platform filter, time zone and `truncated`. Nothing is cut silently.
 - Unknown parameters are rejected instead of ignored, so a typo cannot make an agent analyse the wrong thing.
 - Errors are `{"error": "<code>", "message": "...", "hint": "..."}`; the `hint` says how to fix the request.

@@ -4,13 +4,15 @@ English | [简体中文](README.zh-CN.md)
 
 A lightweight event-collection server: a single Rust binary plus SQLite. It accepts events from the **TelemetryDeck SDKs** and from **OTLP/HTTP Logs**, and ships with an admin UI, write-only API keys for apps and read-only keys for analysis. The UI is available in English and Chinese.
 
-> **Integration by AI, in one paste.** The admin UI generates a ready-made prompt with your server URL, app id and write key already filled in. Copy it into Claude Code, Codex or Cursor, and your coding agent adds the SDK, points it at your server and verifies the connection. No docs to read, no snippets to adapt. → [How it works](#connecting-apps)
+> **Built for AI agents, both ways.**
+> - **Integrate:** the admin UI generates a prompt with your server URL, app id and write key filled in. Paste it into Claude Code, Codex or Cursor, and the agent adds the SDK, points it at your server and verifies the connection.
+> - **Analyze:** issue a read-only key, paste a short prompt, and the agent explores your data through a self-describing API (`/r/v1/`): it lists the event types and custom parameters, ships example queries and guidance, rejects typos instead of guessing, and answers every error with a `hint`. No dashboard needed, no MCP to install, and a key that can only read one app. → [How it works](#connecting-apps) · [Read API](docs/READ_API.md)
 
 - Ingest: `/k/<key>/v2/` (TelemetryDeck) and `/v1/logs` (OTLP, protobuf or JSON, gzip supported)
 - Never stores IP addresses; optional GeoIP (DB-IP City Lite) resolves country / region / city
 - Admin UI: overview (active users and events, weekly retention cohorts, app versions over time, top events, breakdowns by app version / OS / device / locale / country / city), new vs returning users, event types, errors, event browser, API key management; a hint when test-mode events are hidden; manual refresh (default) or optional auto refresh that only re-fetches data
 - **One app, several platforms**: iOS and Android (and macOS, watchOS, …) can share one app and key; a platform filter (taken from the SDK's operating-system parameter) narrows every page to one platform
-- **Read API for agents**: a per-app read-only key and a self-describing JSON API (`/r/v1`), so Claude, Codex or a script can analyse your data without opening the page → [docs/READ_API.md](docs/READ_API.md)
+- **Read API for agents**: per-app read-only keys and a self-describing JSON API (`/r/v1`) with example queries, structured errors with hints and compact `md` / `csv` output → [docs/READ_API.md](docs/READ_API.md)
 - **AI-assisted integration**: a copy-and-paste prompt for your coding agent, generated per app with everything filled in (English and Chinese)
 - Design notes: [DESIGN.md](DESIGN.md)
 

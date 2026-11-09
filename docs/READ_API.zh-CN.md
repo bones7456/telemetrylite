@@ -43,7 +43,7 @@ curl -s -H "Authorization: Bearer $KEY" https://telemetry.example.com/r/v1/
 
 ## 为 agent 设计
 
-- 自描述(`/r/v1/`),提示词不会过期。
+- 自描述(`/r/v1/`):事件类型、自定义参数、`guide_for_agents` 和现成的 `examples`,提示词不会过期。
 - 每个响应都带 `meta`:实际生效的时间窗口、数据类型(正式 / 测试 / 全部)、平台筛选、时区和 `truncated`。不会静默截断。
 - 未知参数会被拒绝而不是忽略,写错参数名不会让 agent 分析错东西。
 - 错误格式为 `{"error": "<code>", "message": "...", "hint": "..."}`,`hint` 说明如何修正请求。

@@ -260,6 +260,8 @@ def run():
     check("describe lists platforms and custom parameters", {p["platform"] for p in d["platforms"]} == {"iOS", "Android"} and "plan" in {p["key"] for p in d["custom_parameters"]["rows"]})
     check("describe documents all endpoints with parameters", {e["path"] for e in d["endpoints"]} == {"/r/v1/", "/r/v1/overview", "/r/v1/events", "/r/v1/query"} and "group_by" in next(e for e in d["endpoints"] if e["path"].endswith("query"))["params"])
     check("describe carries the guidance for agents (so the prompt can stay short)", len(d["guide_for_agents"]) >= 3 and "overview" in d["guide_for_agents"][0])
+    ex = d["examples"]["rows"]; runnable = [e["path"] for e in ex if "<" not in e["path"] and "→" not in e["path"]]
+    check("describe: every example without a placeholder runs (200)", len(ex) >= 6 and all(rd(x, rkey)[0] == 200 for x in runnable), str([x for x in runnable if rd(x, rkey)[0] != 200]))
     check("describe: /r/v1 without the slash works", rd("/r/v1", rkey)[0] == 200)
     check("describe: first/last event are ISO timestamps", d["data"]["last_event_at"].endswith("Z") and d["data"]["first_event_at"].endswith("Z"))
 

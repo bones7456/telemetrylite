@@ -435,6 +435,17 @@ async fn describe(State(st): S, Extension(ctx): Extension<Ctx>, Query(raw): Quer
             "Report findings with the numbers and the time window behind them. If the data is too thin to conclude anything (few users, short window, test-only data), say so instead of guessing.",
             "Keep the read key secret: do not write it into files, logs or commits.",
         ],
+        "examples": { "note": "replace <…> with names from event_types / custom_parameters", "rows": [
+            { "ask": "overall picture, 30 days", "path": "/r/v1/overview?days=30" },
+            { "ask": "daily active users", "path": "/r/v1/query?metric=users&interval=day&days=30" },
+            { "ask": "users per app version", "path": "/r/v1/query?metric=users&group_by=app_version&days=7" },
+            { "ask": "users per platform and country", "path": "/r/v1/query?metric=users&group_by=platform,country&days=30" },
+            { "ask": "one event over time", "path": "/r/v1/query?type=<event>&metric=events,users&interval=day&days=30" },
+            { "ask": "one event split by a custom parameter", "path": "/r/v1/query?type=<event>&metric=events,users&group_by=payload.<key>" },
+            { "ask": "top errors", "path": "/r/v1/query?type=TelemetryDeck.Error.occurred&group_by=payload.TelemetryDeck.Error.id&days=7" },
+            { "ask": "latest raw events as a table", "path": "/r/v1/events?limit=20&format=md" },
+            { "ask": "retention", "path": "/r/v1/overview → retention" },
+        ] },
         "fields": FIELDS_HINT,
         "endpoints": endpoints(),
         "conventions": [
